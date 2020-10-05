@@ -9,7 +9,7 @@ namespace ScriptFileMapper
     static class UMDReplace
     {
         //Version Constants
-        const string VERSION = "2021005K";
+        const string VERSION = "2020005K";
 
         //Int Constants
         const short DESCRIPTOR_LBA = 16; // 16 = 0x010 = LBA of the first volume descriptor
