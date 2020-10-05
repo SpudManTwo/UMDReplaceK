@@ -6,10 +6,10 @@ using System.Text;
 
 namespace ScriptFileMapper
 {
-    static class Program
+    static class UMDReplace
     {
         //Version Constants
-        const string VERSION = "2020911K";
+        const string VERSION = "2021005K";
 
         //Int Constants
         const short DESCRIPTOR_LBA = 16; // 16 = 0x010 = LBA of the first volume descriptor
@@ -26,7 +26,7 @@ namespace ScriptFileMapper
         //M0 Constants
         const uint sectorSize = 2048;// 2048 = 0x800 = LEN_SECTOR_M0 = sector size
         const uint sectorData = 2048; // 2048 = 0x800 = POS_DATA_M0 = sector data length
-        const uint dataOffset = 2048; // 2048 = 0x800 = LEN_DATA_M0 = sector data start
+        const uint dataOffset = 0; // 0 = 0x000 = LEN_DATA_M0 = sector data start
 
         //File Input/Output Constants
         const string TMPNAME = "umd-replacek.$"; // temporal name
@@ -47,19 +47,32 @@ namespace ScriptFileMapper
             //Title
             System.Console.WriteLine(
                 @$"
-UMD-REPLACE version {VERSION} - Copyright (C) 2012-2015 CUE
-Tiny tool to replace data files in a PSP UMD ISO
+UMD-Replace K version {VERSION} - is a C# feature enriched successor of the original UMD-Replace 20150303 Copyright (C) 2012-2015 CUE
+Tiny tool to replace data files in a PSP UMD ISO.
+UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 ");
 
+            if (args.Length == 2)
+            {
+                //Read in batch set of arguments.
+                List<string> batchArgs = new List<string>() { args[0] };
+                using (StreamReader reader = new StreamReader(new FileStream(args[1], FileMode.Open)))
+                {
+                    while (!reader.EndOfStream)
+                        batchArgs.Add(reader.ReadLine());
+                }
+                args = batchArgs.ToArray();
+            }
+
             //Arg Check
-            if (args.Length != 3)
+            if (args.Length % 2 != 1)
             {
                 //Usage Explanation
-                System.Console.WriteLine(@"Usage: UMD-REPLACE imagename filename newfile
+                System.Console.WriteLine(@"Usage: UMD-REPLACEK imagename {batchFileOfArguments | (filename newfile ...)}
 - 'imagename' is the name of the UMD image
+- 'batchFileOfArguments' is the file where a set of batch arguments are stored. This is used for replacing files in a larger bulk than command line arguments can support
 - 'filename' is the file in the UMD image with the data to be replaced
-- 'newfile' is the file with the new data
-
+- 'newfile' is the relative file path with the new data
 * 'imagename' must be a valid UMD ISO image
 * 'filename' can use either the slash or backslash
 * 'newfile' can be different size as 'filename'");
@@ -67,8 +80,75 @@ Tiny tool to replace data files in a PSP UMD ISO
                 Environment.Exit(BAD_APPLICATION_ARGUMENTS_EXIT_CODE);
             }
 
-            //Run the Replace
-            Replace(args[0], args[1], args[2]);
+            // Prepare file for reading into buffer
+            GetFileReadStream(args[0].Replace("\"", ""), out FileStream inputFileStream);
+
+            // Prepare buffer
+            Span<byte> originalIsoFile = new Span<byte>(new byte[inputFileStream.Length]);
+
+            // Read file into Buffer
+            try
+            {
+                inputFileStream.Read(originalIsoFile);
+                inputFileStream.Flush();
+            }
+            finally
+            {
+                inputFileStream.Dispose();
+            }
+
+            bool wasChanged = false;
+            long diff = 0;
+            for (int i = 1; i < args.Length; i += 2)
+            {
+                int originalSize = originalIsoFile.Length;
+                //Run the Replace
+                System.Console.WriteLine("- replacing file " + args[i].Replace("\"", ""));
+                originalIsoFile = Replace(originalIsoFile, args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
+                diff += originalIsoFile.Length - originalSize;
+                if (diff != 0)
+                {
+                    wasChanged = true;
+                }
+            }
+
+            //Delete the old file now that we've got all that we need.
+            System.IO.File.Delete(args[0]);
+
+            //Write out the new file.
+            GetFileWriteStream(args[0], out FileStream outputStream);
+
+            // Write file from Buffer
+            try
+            {
+                //Writing new iso file
+                using (BinaryWriter binaryWriter = new BinaryWriter(outputStream))
+                {
+                    binaryWriter.Write(originalIsoFile);
+                }
+            }
+            finally
+            {
+                outputStream.Dispose();
+            }
+
+            System.Console.Write("- the new image has ");
+            if (diff > 0)
+            {
+                System.Console.WriteLine(diff + " more bytes than the original image.");
+            }
+            else if (diff < 0)
+            {
+                System.Console.WriteLine(diff + " less bytes than the original image.");
+            }
+            else
+            {
+                System.Console.WriteLine("the same amount of bytes as the original image.");
+            }
+            if (wasChanged)
+            {
+                System.Console.WriteLine("- maybe you need to hand update the cuesheet file (if exist and needed)");
+            }
 
             System.Console.WriteLine("\nDone");
 
@@ -76,46 +156,32 @@ Tiny tool to replace data files in a PSP UMD ISO
             Environment.Exit(SUCCESS_EXIT_CODE);
         }
 
-        static void Replace(string isoName, string oldName, string newName)
+        static Span<byte> Replace(Span<byte> originalIsoFile, string oldName, string newName)
         {
-            // Prepare file for reading into buffer
-            ReadFile(isoName, out var fs);
+            GetFileReadStream(newName, out FileStream inputFileStream);
 
             // Prepare buffer
-            Span<byte> originalIsoFile = new Span<byte>(new byte[fs.Length]);
-
-            // Read file into Buffer
-            try
-            {
-                _ = fs.Read(originalIsoFile);
-            }
-            finally
-            {
-                fs.Dispose();
-            }
-
-            ReadFile(newName, out fs);
-
-            // Prepare buffer
-            Span<byte> newFileBytes = new Span<byte>(new byte[fs.Length]);
+            Span<byte> newFileBytes = new Span<byte>(new byte[inputFileStream.Length]);
 
             try
             {
-                _ = fs.Read(newFileBytes);
+                _ = inputFileStream.Read(newFileBytes);
             }
             finally
             {
-                fs.Dispose();
+                inputFileStream.Dispose();
             }
+
 
             // get data from the primary volume descriptor
-            uint imageSectors = BitConverter.ToUInt32(originalIsoFile.Slice((int)dataOffset + TOTAL_SECTORS, 4));
-            uint rootLba = BitConverter.ToUInt32(originalIsoFile.Slice((int)dataOffset + ROOT_FOLDER_LBA, 4));
-            uint rootLength = BitConverter.ToUInt32(originalIsoFile.Slice((int)dataOffset + ROOT_SIZE, 4));
+            uint imageSectors = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS), 4));
+            uint rootLba = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA), 4));
+            long pos = sectorSize * DESCRIPTOR_LBA;
+            uint rootLength = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE), 4));
 
             // get new data from the new file
-            uint newFilesize = (uint)newFileBytes.Length;
-            uint newFileSectors = (uint)((newFilesize / sectorData - 1) / sectorData);
+            uint newFileSize = (uint)(newFileBytes.Length);
+            uint newFileSectors = (uint)((newFileSize + sectorData - 1) / sectorData);
 
             // 'oldName' must start with a path separator
             if ((oldName[0] != '/') && (oldName[0] != '\\'))
@@ -131,7 +197,6 @@ Tiny tool to replace data files in a PSP UMD ISO
 
             if (foundPosition == 0)
             {
-                System.Console.WriteLine($"Could not find file '{oldName}' inside of iso file '{isoName}'\n");
                 Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
             }
 
@@ -139,15 +204,12 @@ Tiny tool to replace data files in a PSP UMD ISO
             uint foundOffset = (uint)(foundPosition % sectorSize);
 
             // get data from the old file
-            uint oldFilesize = BitConverter.ToUInt32(originalIsoFile.Slice((int)(foundOffset + 10), 4)); //0x0A = 10
-            uint oldFileSectors = (oldFilesize + sectorData - 1) / sectorData;
-            uint fileLBA = BitConverter.ToUInt32(originalIsoFile.Slice((int)(foundOffset + 2), 4)); //0x02 = 2
+            uint oldFileSize = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * foundLBA + foundOffset + 10), 4)); //0x0A = 10
+            uint oldFileSectors = (oldFileSize + sectorData - 1) / sectorData;
+            uint fileLBA = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * foundLBA + foundOffset + 2), 4)); //0x02 = 2
 
             //size difference in sectors
             int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectors - oldFileSectors));
-
-            //image name
-            string name = diff == 0 ? isoName : TMPNAME;
 
             //As a change from the original C code, we won't be creating a duplicate file just for reading as we update since we're storing the whole file in memory.
             //That said, I have left the equivalent C# code commented out below if you want that functionality brought back for some reason.
@@ -158,21 +220,15 @@ Tiny tool to replace data files in a PSP UMD ISO
             {
                 //create the new image
                 System.Console.WriteLine("- creating temporal image");
-
                 FileStream outputStream = File.Create(name);
-
                 uint lba = 0;
-
                 //update the previous sectors
                 System.Console.WriteLine("- updating previous data sectors");
-
                 uint maxim = fileLBA;
                 uint count = 0;
-
                 for(uint i=0;i < fileLBA; i += count, lba += count)
                 {
                     count = maxim >= BLOCKSIZE ? BLOCKSIZE : maxim; maxim -= count;
-
                     using (BinaryWriter writer = new BinaryWriter(outputStream))
                     {
                         writer.Write(originalIsoFile.GetRange((int)i, (int)count).ToArray());
@@ -186,168 +242,73 @@ Tiny tool to replace data files in a PSP UMD ISO
             */
 
             // update the new file
-            System.Console.WriteLine("- updating file data");
 
             if (newFileSectors != 0)
             {
-                /*
-                // read and update all data sectors except the latest one (maybe incomplete)
-                uint maxim = --newFileSectors;
-                uint count = maxim >= BLOCKSIZE ? BLOCKSIZE : maxim;
-                for (uint i = 0; i < newFileSectors; i+= count)
-                {
-                    count = maxim >= BLOCKSIZE ? BLOCKSIZE : maxim;
-                    maxim -= count;
-
-                    for (uint j = 0; j < count; j++)
-                    {
-                        for (uint k = 0; k < sectorData; k++)
-                        {
-
-                        }
-                    }
-
-                    lba += count;
-                }
-                */
-
-                //Inject the new ones in to the place where the old ones used to sit.
-                originalIsoFile.ExchangeSectors((int)fileLBA, (int)oldFileSectors, (int)newFileSectors, newFileBytes);
+                //Inject the new sectors in to the place where the old ones used to sit.
+                originalIsoFile = ExchangeSectors(originalIsoFile, (int)(lba++), (int)oldFileSectors, newFileBytes);
             }
-/*
-            uint littleEndian = 0;
-            uint bigEndian = 0;
 
-            if (newFilesize != oldFilesize)
+            if (newFileSize != oldFileSize)
             {
                 // update the file size
                 System.Console.WriteLine("- updating file size");
-
-                littleEndian = newFilesize;
-                bigEndian = ChangeEndian(littleEndian);
-
-                //Replace the old little endian bytes
-                originalIsoFile.RemoveRange((int)(foundLBA + foundOffset + 10), 4); //0x0A = 10
-                originalIsoFile.InsertRange((int)(foundLBA + foundOffset + 10), BitConverter.GetBytes(littleEndian));
-                //Replace the old big endian bytes
-                originalIsoFile.RemoveRange((int)(foundLBA + foundOffset + 14), 4); //0x0E = 14 
-                originalIsoFile.InsertRange((int)(foundLBA + foundOffset + 14), BitConverter.GetBytes(bigEndian));
+                uint littleEndian = newFileSize;
+                uint bigEndian = ChangeEndian(littleEndian);
+                byte[] littleEndianBytes = BitConverter.GetBytes(littleEndian);
+                byte[] bigEndianBytes = BitConverter.GetBytes(bigEndian);
+                for (int i = 0; i < 4; i++)
+                {
+                    //Replace the old little endian bytes
+                    originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i]; //0x0A = 10
+                    //Replace the old big endian bytes
+                    originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i]; //0x0E = 14 
+                }
             }
 
             if (diff != 0)
             {
                 // update the primary volume descriptor
                 System.Console.WriteLine("- updating primary volume descriptor");
-
-                littleEndian = (uint)(imageSectors + diff);
-                bigEndian = ChangeEndian(littleEndian);
-
-                //Replace the old little endian bytes
-                originalIsoFile.RemoveRange((int)(DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS), 4);
-                originalIsoFile.InsertRange((int)(DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS), BitConverter.GetBytes(littleEndian));
-                //Replace the old big endian bytes
-                originalIsoFile.RemoveRange((int)(DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4), 4);
-                originalIsoFile.InsertRange((int)(DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4), BitConverter.GetBytes(bigEndian));
+                uint littleEndian = (uint)(imageSectors + diff);
+                uint bigEndian = ChangeEndian(littleEndian);
+                byte[] littleEndianBytes = BitConverter.GetBytes(littleEndian);
+                byte[] bigEndianBytes = BitConverter.GetBytes(bigEndian);
+                for (int i = 0; i < 4; i++)
+                {
+                    //Replace the old little endian bytes
+                    originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i]; //0x0A = 10
+                    //Replace the old big endian bytes
+                    originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i]; //0x0E = 14 
+                }
 
                 // update the path tables
                 System.Console.WriteLine("- updating path tables");
-
                 //Unsure about this next block
                 for (int i = 0; i < 4; i++)
                 {
-                    uint tblLen = BitConverter.ToUInt32(originalIsoFile.GetRange((int)(DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN), 4).ToArray());
-                    uint tblLBA = BitConverter.ToUInt32(originalIsoFile.GetRange((int)(DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i), 4).ToArray());
+                    uint tblLen = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN), 4));
+                    uint tblLBA = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i), 4));
                     if (tblLBA != 0)
                     {
-                        if (i == 0x2) //Bit wise & for byte comparison in C.
+                        if (i == 2) //0x2 = 2 Bit wise & for byte comparison in C.
                         {
                             tblLBA = ChangeEndian(tblLBA);
                         }
-                        PathTable(originalIsoFile, tblLBA, tblLen, fileLBA, diff, i == 0x2);
+                        PathTable(originalIsoFile, tblLBA, tblLen, fileLBA, diff, i == 2); //0x2 = 2
                     }
                 }
+
+                // update the file/folder LBAs
+                System.Console.WriteLine("- updating entire TOCs");
+
+                TOC(originalIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
             }
 
-            // update the file/folder LBAs
-            System.Console.WriteLine("- updating entire TOCs");
-
-            TOC(originalIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
-
-            //Rename the old file to a temporal file
-            System.IO.File.Move(isoName, isoName + TMPNAME);
-
-            //Write out the new file.
-            FileStream outputStream = null;
-            try
-            {
-                outputStream = File.Open(isoName, FileMode.Create);
-            }
-            catch (ArgumentException)
-            {
-                System.Console.WriteLine("No such iso file '" + isoName + "'\n");
-                Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
-            }
-            catch (PathTooLongException)
-            {
-                System.Console.WriteLine("Iso File Path '" + isoName + "' exceeds system-defined length.\n");
-                Environment.Exit(FILE_NAME_TOO_LONG);
-            }
-            catch (DirectoryNotFoundException)
-            {
-                System.Console.WriteLine("Specified iso path'" + isoName + "' is invalid.\n");
-                Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                System.Console.WriteLine("Current User lacks sufficient permissions for iso file '" + isoName + "'\n");
-                Environment.Exit(CANNOT_OPEN_FILE_EXIT_CODE);
-            }
-            catch (FileNotFoundException)
-            {
-                System.Console.WriteLine("No such iso file '" + isoName + "'\n");
-                Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
-            }
-            catch (NotSupportedException)
-            {
-                System.Console.WriteLine("Iso File '" + isoName + "' is not in a recognizable format.\n");
-                Environment.Exit(CANNOT_OPEN_FILE_EXIT_CODE);
-            }
-            catch (IOException)
-            {
-                System.Console.WriteLine("A error occured while opening the iso file '" + isoName + "'\n");
-                Environment.Exit(CANNOT_OPEN_FILE_EXIT_CODE);
-            }
-
-            //Writing Temporal File
-            using (BinaryWriter binaryWriter = new BinaryWriter(outputStream))
-            {
-                binaryWriter.Write(originalIsoFile.ToArray());
-            }
-
-            outputStream.Close();
-
-            System.Console.Write("- the new image has ");
-            if (diff > 0)
-            {
-                System.Console.WriteLine(diff + " more sectors than the original image.");
-            }
-            else if (diff < 0)
-            {
-                System.Console.WriteLine(diff + " less sectors than the original image.");
-            }
-            else
-            {
-                System.Console.WriteLine("the same amount of sectors as the original image.");
-            }
-
-            if (diff != 0)
-            {
-                System.Console.WriteLine("- maybe you need to hand update the cuesheet file (if exist and needed)");
-            }
-            */
+            return originalIsoFile;
         }
 
-        private static void ReadFile(string filePath, out FileStream fs)
+        private static void GetFileReadStream(string filePath, out FileStream fs)
         {
             try
             {
@@ -393,53 +354,109 @@ Tiny tool to replace data files in a PSP UMD ISO
             fs = default;
         }
 
+        private static void GetFileWriteStream(string filePath, out FileStream fs)
+        {
+            try
+            {
+                fs = File.Open(filePath, FileMode.Create);
+                return;
+            }
+            catch (ArgumentException)
+            {
+                System.Console.WriteLine("No such iso file '" + filePath + "'\n");
+                Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
+            }
+            catch (PathTooLongException)
+            {
+                System.Console.WriteLine("Iso File Path '" + filePath + "' exceeds system-defined length.\n");
+                Environment.Exit(FILE_NAME_TOO_LONG);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                System.Console.WriteLine("Specified iso path'" + filePath + "' is invalid.\n");
+                Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                System.Console.WriteLine("Current User lacks sufficient permissions for iso file '" + filePath + "'\n");
+                Environment.Exit(CANNOT_OPEN_FILE_EXIT_CODE);
+            }
+            catch (FileNotFoundException)
+            {
+                System.Console.WriteLine("No such iso file '" + filePath + "'\n");
+                Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
+            }
+            catch (NotSupportedException)
+            {
+                System.Console.WriteLine("Iso File '" + filePath + "' is not in a recognizable format.\n");
+                Environment.Exit(CANNOT_OPEN_FILE_EXIT_CODE);
+            }
+            catch (IOException)
+            {
+                System.Console.WriteLine("A error occured while opening the iso file '" + filePath + "'\n");
+                Environment.Exit(CANNOT_OPEN_FILE_EXIT_CODE);
+            }
+            fs = default;
+        }
+
         static ulong Search(Span<byte> originalIso, string fileName, string path, uint lba, uint len)
         {
             ulong totalSectors = (ulong)((len + sectorSize - 1) / sectorSize);
-            ulong found = 0;
             for (uint i = 0; i < totalSectors; i++)
             {
-                uint nBytes = 0;
+                uint nBytes;
                 for (long position = 0; position < sectorData && (dataOffset + position + 4) < originalIso.Length; position += nBytes)
                 {
+                    if (sectorSize * (lba + i) + dataOffset + position >= originalIso.Length)
+                    {
+                        break;
+                    }
                     //field size
-                    nBytes = originalIso[(int)(lba + i + dataOffset + position)];
+                    nBytes = originalIso[(int)(sectorSize * (lba + i) + dataOffset + position)];
+                    if (nBytes == 0)
+                    {
+                        break;
+                    }
 
                     //name size
-                    uint nChars = originalIso[(int)(lba + i + dataOffset + position + 32)]; //0x020 = 32
-                    string name = "";
-                    for (int j = 0; j < nChars; j++)
-                    {
-                        // FIXME: Characters are not one byte big
-                        name += BitConverter.ToChar(originalIso.Slice((int)(lba + i + dataOffset + position + 33 + j), 1).ToArray()); //0x021 = 33
-                    }
+                    byte nChars = originalIso[(int)(sectorSize * (lba + i) + dataOffset + position + 32)]; //0x020 = 32
+                    Span<byte> name = new Span<byte>(new byte[nChars]);
+                    originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + position + 33), nChars).CopyTo(name);
 
                     // discard the ";1" final
-                    if (nChars > 2)
+                    if (nChars > 2 && name[nChars - 2] == 59) //0x3B = 59 = ';' in ASCII
                     {
-                        name = name.Substring(0, name.Length - 2);
+                        nChars -= 2;
+                        name[nChars] = 0;
                     }
 
+                    string nameString = Encoding.ASCII.GetString(name);
+
                     // check the name except for '.' and '..' entries
-                    if ((nChars != 1) || ((name[0] != '\0') && (name[0] != '1')))
+                    if ((nChars != 1) || ((name[0] != 0) && (name[0] != 1))) // 0x1 = Repeat previous character in ASCII
                     {
                         //new path name
-                        string newPath = $"{path}/{name}"; // sprintf is the string format for C. While the syntax looks different, the functionality is supposed to be the same.
-                        if (originalIso[(int)(dataOffset + position + 25)] == 0x02)
-                        { // 0x019 = 25, Bitwise & in C compares two bytes for equality.
+                        string newPath = $"{path}/{nameString}"; // sprintf is the string format for C. While the syntax looks different, the functionality is supposed to be the same.
+                        if (originalIso[(int)(sectorSize * (lba + i) + dataOffset + position + 25)] == 2) // 0x002 = 2
+                        {
+                            //Recursive Search Through Folders
 
-                            uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(lba + i + dataOffset + position + 2), 4).ToArray()); // 0x002 = 2
-                            uint newLen = BitConverter.ToUInt32(originalIso.Slice((int)(lba + i + dataOffset + position + 10), 4).ToArray()); // 0x00A = 10
+                            // 0x019 = 25, Bitwise & in C compares two bytes for equality.
+                            uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + position + 2), 4)); // 0x002 = 2
+                            uint newLen = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + position + 10), 4)); // 0x00A = 10
 
-                            found = Search(originalIso, fileName, newPath, newLBA, newLen);
+                            ulong found = Search(originalIso, fileName, newPath, newLBA, newLen);
+
                             if (found != 0)
                             {
                                 return found;
                             }
-                            else if (fileName.Equals(newPath, StringComparison.InvariantCultureIgnoreCase))
-                            {
-                                return (lba + i) * (ulong)(sectorSize + dataOffset + position);
-                            }
+                        }
+                        // compare names - case insensitive
+                        else if (fileName.Equals(newPath, StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            // file found
+                            return (ulong)((lba + i) * sectorSize + dataOffset + position);
                         }
                     }
                 }
@@ -449,22 +466,25 @@ Tiny tool to replace data files in a PSP UMD ISO
             return 0;
         }
 
-        static void PathTable(List<byte> originalIso, uint lba, uint len, uint lbaOld, int diff, bool sw)
+        static void PathTable(Span<byte> originalIso, uint lba, uint len, uint lbaOld, int diff, bool sw)
         {
-            uint nBytes = 0;
+            uint nBytes;
 
-            for (uint pos = 0; pos < len; pos = 8 + nBytes + (nBytes & 0x1)) //0x08 = 8 Oh and this one is actually used as a bit-wise AND
+            for (uint pos = 0; pos < len; pos += 8 + nBytes + (nBytes & 0x1)) //0x01 = 1 Oh and this one is actually used as a bit-wise & so I'm leaving it in hex
             {
+                if (sectorSize * lba + dataOffset + pos >= originalIso.Length)
+                {
+                    break;
+                }
                 //field size
-                nBytes = BitConverter.ToUInt32(originalIso.GetRange((int)(lba + dataOffset + pos), 4).ToArray());
+                nBytes = originalIso[(int)(sectorSize * lba + dataOffset + pos)];
                 if (nBytes == 0)
                 {
-                    //no more entries in table
                     break;
                 }
 
                 //position
-                uint newLBA = BitConverter.ToUInt32(originalIso.GetRange((int)(lba + dataOffset + pos + 2), 4).ToArray()); //0x002 = 2
+                uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * lba + dataOffset + pos + 2), 4)); //0x002 = 2
                 if (sw)
                 {
                     newLBA = ChangeEndian(newLBA);
@@ -479,42 +499,46 @@ Tiny tool to replace data files in a PSP UMD ISO
                         newLBA = ChangeEndian(newLBA);
                     }
 
+                    byte[] newLBABytes = BitConverter.GetBytes(newLBA);
+
                     //update sectors if needed, 0x002 = 2
-                    originalIso.RemoveRange((int)(lba + dataOffset + pos + 2), 4);
-                    originalIso.InsertRange((int)(lba + dataOffset + pos + 2), BitConverter.GetBytes(newLBA));
+                    for (int i = 0; i < 4; i++)
+                    {
+                        originalIso[(int)(sectorSize * lba + dataOffset + pos + 2 + i)] = newLBABytes[i];
+                    }
                 }
             }
         }
 
-        static void TOC(List<byte> originalIso, uint lba, uint len, ulong found, uint lbaOld, int diff)
+        static void TOC(Span<byte> originalIso, uint lba, uint len, ulong found, uint lbaOld, int diff)
         {
             // total sectors
-            long totalSectors = originalIso.Count / sectorSize;
-
+            long totalSectors = (len + sectorSize - 1) / sectorSize;
 
             for (uint i = 0; i < totalSectors; i++)
             {
-                uint nBytes = 0;
+                uint nBytes;
                 for (uint pos = 0; pos < len; pos += nBytes)
                 {
+                    if (sectorSize * (lba + i) + dataOffset + pos >= originalIso.Length)
+                    {
+                        break;
+                    }
                     //field size
-                    nBytes = BitConverter.ToUInt32(originalIso.GetRange((int)(lba + i + dataOffset + pos), 4).ToArray());
+                    nBytes = originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos)];
                     if (nBytes == 0)
                     {
-                        //no more entries in this sector;
                         break;
                     }
 
                     //name size
-                    char nChars = BitConverter.ToChar(originalIso.GetRange((int)(lba + i + dataOffset + pos + 32), 1).ToArray()); //0x020 = 32
-                    string name = "";
-                    for (int j = 0; j < nChars; j++)
-                    {
-                        name += BitConverter.ToChar(originalIso.GetRange((int)(lba + i + dataOffset + pos + 33 + j), 1).ToArray()); //0x021 = 33
-                    }
+                    byte nChars = originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 32)]; //0x020 = 32
+                    Span<byte> name = new Span<byte>(new byte[nChars]);
+                    originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + pos + 33), nChars).CopyTo(name);
+                    string nameString = Encoding.ASCII.GetString(name);
 
                     // position
-                    uint newLBA = BitConverter.ToUInt32(originalIso.GetRange((int)(lba + dataOffset + pos + 2), 4).ToArray()); // 0x002 = 2
+                    uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + pos + 2), 4)); // 0x002 = 2
 
                     // needed to change a 0-bytes file with more 0-bytes files (same LBA)
                     ulong newfound = (ulong)(lba + i) * sectorSize + dataOffset + pos;
@@ -524,20 +548,23 @@ Tiny tool to replace data files in a PSP UMD ISO
                         //update sector if needed
                         newLBA += (uint)diff;
 
-                        originalIso.RemoveRange((int)(lba + i + dataOffset + pos + 2), 4); // 0x002 = 2
-                        originalIso.InsertRange((int)(lba + i + dataOffset + pos + 2), BitConverter.GetBytes(newLBA));
+                        byte[] newLBABytes = BitConverter.GetBytes(newLBA);
+                        byte[] bigEndianBytes = BitConverter.GetBytes(ChangeEndian(newLBA));
 
-                        originalIso.RemoveRange((int)(lba + i + dataOffset + pos + 6), 4); // 0x006 = 6
-                        originalIso.InsertRange((int)(lba + i + dataOffset + pos + 6), BitConverter.GetBytes(ChangeEndian((uint)name.Length))); //typically this would be j but that j = length of string and C# has things for that.
+                        for (int endianByte = 0; endianByte < 4; endianByte++)
+                        {
+                            originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 2 + endianByte)] = newLBABytes[endianByte]; // 0x002 = 2
+                            originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 6 + endianByte)] = bigEndianBytes[endianByte]; // 0x006 = 6
+                        }
                     }
 
                     // check the name except for '.' and '..' entries
-                    if ((nChars != 1) || ((name[0] != '\0') && (name[0] != '1')))
+                    if ((nChars != 1) || ((name[0] != 0) && (name[0] != 1))) // 0x0 = 0 and 0x1 = repeat previous character in ASCII
                     {
-                        // recursive update in folders
-                        if (BitConverter.ToChar(originalIso.GetRange((int)(lba + i + dataOffset + pos + 25), 1).ToArray()) == 0x02) //0x019 = Using bit wise & as a comparison again here.
+                        //recursive update in folders
+                        if (originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 25)] == 2) //0x02 = 2
                         {
-                            uint newLen = BitConverter.ToUInt32(originalIso.GetRange((int)(lba + dataOffset + pos + 10), 4).ToArray()); // 0x00A = 2
+                            uint newLen = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + pos + 10), 4)); // 0x00A = 10
 
                             TOC(originalIso, newLBA, newLen, found, lbaOld, diff);
                         }
@@ -551,19 +578,24 @@ Tiny tool to replace data files in a PSP UMD ISO
             return BitConverter.ToUInt32(BitConverter.GetBytes(value).Reverse().ToArray());
         }
 
-        static void ExchangeSectors (this Span<byte> image, int offset, int sectorsToRemoveCount, int sectorsToAddCount, in Span<byte> dataToExchange)
+        static Span<byte> ExchangeSectors(Span<byte> image, int offset, int originalFileSectors, in Span<byte> dataToExchange)
         {
-            // Calculate amount of sector difference and create memory buffer that fits the new data
-            var absDiff = (sectorsToAddCount - sectorsToRemoveCount) * (int)sectorSize;
-            var addedDiff = sectorsToAddCount * (int)sectorSize;
-            var removedDiff = sectorsToRemoveCount * (int)sectorSize;
-            var processedImage = new Span<byte>(new byte[image.Length + absDiff]);
+            return new Span<byte>(
+                        image.Slice(0, (int)(offset * sectorSize)).ToArray()
+                            .Concat(ConvertToSectors(dataToExchange))
+                            .Concat(image.Slice((int)(sectorSize * (offset + originalFileSectors))).ToArray())
+                            .ToArray());
+        }
 
-            // Copy data
-            image[..offset].CopyTo(processedImage);
-            dataToExchange.CopyTo(processedImage[offset..]);
-            image[(offset + removedDiff)..].CopyTo(processedImage[(offset + addedDiff)..]);
-            image = processedImage;
+        static byte[] ConvertToSectors(Span<byte> fileData)
+        {
+            if (fileData.Length % sectorSize == 0)
+            {
+                return fileData.ToArray();
+            }
+            byte[] bytePadding = new byte[sectorSize - fileData.Length % sectorSize];
+            Array.Fill<byte>(bytePadding, 0);
+            return fileData.ToArray().Concat(bytePadding).ToArray();
         }
     }
 }
