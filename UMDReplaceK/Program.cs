@@ -148,17 +148,19 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             Task.WaitAll(oldFilePrepQueue);
             Task.WaitAll(newFilePrepQueue);
 
-            filesForReplacement = filesForReplacement.OrderBy(fileNameLocation => fileNameLocation.Value).ToDictionary(pair => pair.Key, pair => pair.Value);
+            filesForReplacement = filesForReplacement.OrderByDescending(fileNameLocation => fileNameLocation.Value).ToDictionary(pair => pair.Key, pair => pair.Value);
 
-            newIsoFile = new byte[newFileSectorCounts.Sum(pair => pair.Value)*sectorSize];
+            newIsoFile = new byte[originalIsoFile.Length];
+
+            Array.Copy(originalIsoFile, newIsoFile, originalIsoFile.Length);
 
             for (int i = 1; i < args.Length; i += 2)
             {
-                int originalSize = originalIsoFile.Length;
+                int originalSize = newIsoFile.Length;
                 //Run the Replace
                 Console.WriteLine("- replacing file " + args[i].Replace("\"", ""));
-                originalIsoFile = await Replace(args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
-                diff += originalIsoFile.Length - originalSize;
+                newIsoFile = await Replace(args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
+                diff += newIsoFile.Length - originalSize;
                 if (diff != 0)
                 {
                     wasChanged = true;
@@ -177,7 +179,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 //Writing new iso file
                 using (BinaryWriter binaryWriter = new BinaryWriter(outputStream))
                 {
-                    binaryWriter.Write(originalIsoFile);
+                    binaryWriter.Write(newIsoFile);
                 }
             }
             finally
@@ -212,7 +214,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
         static async Task<byte[]> Replace(string oldName, string newName)
         {
             // get data from the primary volume descriptor
-            uint imageSectors = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4)]);
+            uint imageSectors = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4)]);
             long pos = sectorSize * DESCRIPTOR_LBA;
             
             // get new data from the new file
@@ -239,7 +241,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             uint oldFileSectorCount = oldFileSectorCounts[oldName];
 
             //Calculate the LBA
-            uint fileLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 2)..(int)(sectorSize * foundLBA + foundOffset + 6)]); //0x02 = 2
+            uint fileLBA = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 2)..(int)(sectorSize * foundLBA + foundOffset + 6)]); //0x02 = 2
 
             //size difference in sectors
             int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectorCount - oldFileSectorCount));
@@ -278,8 +280,17 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
             if (newFileSectorCount != 0)
             {
+                if(newFileSectorCount != oldFileSectorCount)
+                {
+                    ExchangeInequalSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
+                }
+                else
+                {
+                    ExchangeEqualSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
+                }
+
                 //Inject the new sectors in to the place where the old ones used to sit.
-                ExchangeSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
+                //ExchangeSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
             }
 
             if (newFileSize != oldFileSize)
@@ -293,9 +304,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 for (int i = 0; i < 4; i++)
                 {
                     //Replace the old little endian bytes
-                    originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i]; //0x0A = 10
+                    //originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i]; //0x0A = 10
+                    newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i];
                     //Replace the old big endian bytes
-                    originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i]; //0x0E = 14 
+                    //originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i]; //0x0E = 14 
+                    newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i];
                 }
             }
 
@@ -310,9 +323,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 for (int i = 0; i < 4; i++)
                 {
                     //Replace the old little endian bytes
-                    originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i]; //0x0A = 10
+                    //originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i]; //0x0A = 10
+                    newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i];
                     //Replace the old big endian bytes
-                    originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i]; //0x0E = 14 
+                    //originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i]; //0x0E = 14 
+                    newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i];
                 }
 
                 // update the path tables
@@ -320,25 +335,31 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 //Unsure about this next block
                 for (int i = 0; i < 4; i++)
                 {
-                    uint tblLen = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
-                    uint tblLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
+                    //uint tblLen = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
+                    uint tblLen = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
+                    //uint tblLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
+                    uint tblLBA = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
+
                     if (tblLBA != 0)
                     {
                         if (i == 2) //0x2 = 2 Bit wise & for byte comparison in C.
                         {
                             tblLBA = ChangeEndian(tblLBA);
                         }
-                        PathTable(originalIsoFile, tblLBA, tblLen, fileLBA, diff, i == 2); //0x2 = 2
+                        PathTable(newIsoFile, tblLBA, tblLen, fileLBA, diff, i == 2); //0x2 = 2
                     }
                 }
 
                 // update the file/folder LBAs
                 System.Console.WriteLine("- updating entire TOCs");
 
-                TOC(originalIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
+                //TOC(originalIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
+                TOC(newIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
+
             }
 
-            return originalIsoFile;
+            //return originalIsoFile;
+            return newIsoFile;
         }
 
         private static void GetFileReadStream(string filePath, out FileStream fs)
@@ -638,6 +659,38 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                             .Concat(originalIsoFile[(int)(sectorSize * (offset + originalFileSectors))..^0])
                             .ToArray();
             ExchangeTime += DateTime.Now.Ticks - start;
+            fileLock = false;
+        }
+
+        static void ExchangeEqualSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
+        {
+            while (fileLock)
+            {
+                Thread.Sleep(rngGenerator.Next(0, 10));
+                //Wait for file to be unlocked
+            }
+            fileLock = true;
+
+            Array.Copy(dataToExchange, 0, newIsoFile, offset * sectorSize, dataToExchange.Length);
+
+            fileLock = false;
+        }
+
+        static void ExchangeInequalSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
+        {
+            while (fileLock)
+            {
+                Thread.Sleep(rngGenerator.Next(0, 10));
+                //Wait for file to be unlocked
+            }
+            fileLock = true;
+
+            byte[] newArrayWidth = new byte[newIsoFile.Length + dataToExchange.Length - originalFileSectors];
+            Array.Copy(newIsoFile, 0, newArrayWidth, 0, offset * sectorSize);
+            Array.Copy(dataToExchange, 0, newArrayWidth, offset * sectorSize, dataToExchange.Length);
+            Array.Copy(newIsoFile, sectorSize * (offset + originalFileSectors), newArrayWidth, offset * sectorSize + dataToExchange.Length, newIsoFile.Length - sectorSize * (offset + originalFileSectors));
+
+            newIsoFile = newArrayWidth;
             fileLock = false;
         }
 
