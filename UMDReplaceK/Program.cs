@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace ScriptFileMapper
 {
@@ -42,7 +44,20 @@ namespace ScriptFileMapper
         const int FILE_NAME_TOO_LONG = 111;
         const int CANNOT_OPEN_FILE_EXIT_CODE = 110;
 
-        static void Main(string[] args)
+        static bool fileLock = false;
+
+        static long SearchTime = 0;
+        static long PathTableTime = 0;
+        static long TOCTime = 0;
+        static long ExchangeTime = 0;
+        static long ConversionTime = 0;
+        static byte[] originalIsoFile;
+        static Dictionary<ulong, string> filesForReplacement = new Dictionary<ulong, string>();
+        static uint rootLba = 0;
+        static uint rootLength = 0;
+        static Random rngGenerator = new Random();
+
+        static async Task Main(string[] args)
         {
             //Title
             System.Console.WriteLine(
@@ -84,7 +99,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             GetFileReadStream(args[0].Replace("\"", ""), out FileStream inputFileStream);
 
             // Prepare buffer
-            Span<byte> originalIsoFile = new Span<byte>(new byte[inputFileStream.Length]);
+            originalIsoFile = new byte[inputFileStream.Length];
 
             // Read file into Buffer
             try
@@ -99,12 +114,37 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
             bool wasChanged = false;
             long diff = 0;
+            rootLba = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA + 4)]);
+            rootLength = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE + 4)]);
+
+            Task[] searchQueue = new Task[args.Length/2];            
+
+            for (int i = 1; i < args.Length; i += 2)
+            {
+                //Run the Replace
+                System.Console.WriteLine("- finding file " + args[i].Replace("\"", ""));
+                string oldName = args[i].Replace("\"", "");
+                if ((oldName[0] != '/') && (oldName[0] != '\\'))
+                {
+                    oldName = '/' + oldName;
+                }
+
+                // change all backslashes by slashes in 'oldname'
+                oldName = oldName.Replace("\\", "/");
+                searchQueue[i/2] = Search(oldName, string.Empty, rootLba, rootLength);
+                //searchQueue[i / 2].Start();
+            }
+
+            Task.WaitAll(searchQueue);
+
+            filesForReplacement = filesForReplacement.OrderBy(fileNameLocation => fileNameLocation.Value).ToDictionary(pair => pair.Key, pair => pair.Value);
+
             for (int i = 1; i < args.Length; i += 2)
             {
                 int originalSize = originalIsoFile.Length;
                 //Run the Replace
                 System.Console.WriteLine("- replacing file " + args[i].Replace("\"", ""));
-                originalIsoFile = Replace(originalIsoFile, args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
+                originalIsoFile = await Replace(args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
                 diff += originalIsoFile.Length - originalSize;
                 if (diff != 0)
                 {
@@ -156,12 +196,12 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             Environment.Exit(SUCCESS_EXIT_CODE);
         }
 
-        static Span<byte> Replace(Span<byte> originalIsoFile, string oldName, string newName)
+        static async Task<byte[]> Replace(string oldName, string newName)
         {
             GetFileReadStream(newName, out FileStream inputFileStream);
 
             // Prepare buffer
-            Span<byte> newFileBytes = new Span<byte>(new byte[inputFileStream.Length]);
+            byte[] newFileBytes = new byte[inputFileStream.Length];
 
             try
             {
@@ -174,11 +214,9 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
 
             // get data from the primary volume descriptor
-            uint imageSectors = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS), 4));
-            uint rootLba = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA), 4));
+            uint imageSectors = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4)]);
             long pos = sectorSize * DESCRIPTOR_LBA;
-            uint rootLength = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE), 4));
-
+            
             // get new data from the new file
             uint newFileSize = (uint)(newFileBytes.Length);
             uint newFileSectors = (uint)((newFileSize + sectorData - 1) / sectorData);
@@ -193,7 +231,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             oldName = oldName.Replace("\\", "/");
 
             // search 'oldname' in the image
-            ulong foundPosition = Search(originalIsoFile, oldName, string.Empty, rootLba, rootLength);
+            ulong foundPosition = await Search(oldName, string.Empty, rootLba, rootLength);
 
             if (foundPosition == 0)
             {
@@ -204,9 +242,9 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             uint foundOffset = (uint)(foundPosition % sectorSize);
 
             // get data from the old file
-            uint oldFileSize = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * foundLBA + foundOffset + 10), 4)); //0x0A = 10
+            uint oldFileSize = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10)..(int)(sectorSize * foundLBA + foundOffset + 14)]); //0x0A = 10
             uint oldFileSectors = (oldFileSize + sectorData - 1) / sectorData;
-            uint fileLBA = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * foundLBA + foundOffset + 2), 4)); //0x02 = 2
+            uint fileLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 2)..(int)(sectorSize * foundLBA + foundOffset + 6)]); //0x02 = 2
 
             //size difference in sectors
             int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectors - oldFileSectors));
@@ -246,7 +284,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             if (newFileSectors != 0)
             {
                 //Inject the new sectors in to the place where the old ones used to sit.
-                originalIsoFile = ExchangeSectors(originalIsoFile, (int)(lba++), (int)oldFileSectors, newFileBytes);
+                ExchangeSectors((int)(lba++), (int)oldFileSectors, newFileBytes);
             }
 
             if (newFileSize != oldFileSize)
@@ -287,8 +325,8 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 //Unsure about this next block
                 for (int i = 0; i < 4; i++)
                 {
-                    uint tblLen = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN), 4));
-                    uint tblLBA = BitConverter.ToUInt32(originalIsoFile.Slice((int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i), 4));
+                    uint tblLen = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
+                    uint tblLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
                     if (tblLBA != 0)
                     {
                         if (i == 2) //0x2 = 2 Bit wise & for byte comparison in C.
@@ -399,29 +437,30 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             fs = default;
         }
 
-        static ulong Search(Span<byte> originalIso, string fileName, string path, uint lba, uint len)
+        static async Task<ulong> Search(string fileName, string path, uint lba, uint len)
         {
+            long start = DateTime.Now.Ticks;
             ulong totalSectors = (ulong)((len + sectorSize - 1) / sectorSize);
             for (uint i = 0; i < totalSectors; i++)
             {
                 uint nBytes;
-                for (long position = 0; position < sectorData && (dataOffset + position + 4) < originalIso.Length; position += nBytes)
+                for (long position = 0; position < sectorData && (dataOffset + position + 4) < originalIsoFile.Length; position += nBytes)
                 {
-                    if (sectorSize * (lba + i) + dataOffset + position >= originalIso.Length)
+                    if (sectorSize * (lba + i) + dataOffset + position >= originalIsoFile.Length)
                     {
                         break;
                     }
                     //field size
-                    nBytes = originalIso[(int)(sectorSize * (lba + i) + dataOffset + position)];
+                    nBytes = originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position)];
                     if (nBytes == 0)
                     {
                         break;
                     }
 
                     //name size
-                    byte nChars = originalIso[(int)(sectorSize * (lba + i) + dataOffset + position + 32)]; //0x020 = 32
-                    Span<byte> name = new Span<byte>(new byte[nChars]);
-                    originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + position + 33), nChars).CopyTo(name);
+                    byte nChars = originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 32)]; //0x020 = 32
+                    byte[] name = new byte[nChars];
+                    originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 33)..(int)(sectorSize * (lba + i) + dataOffset + position + 33+ nChars)].CopyTo(name, 0);
 
                     // discard the ";1" final
                     if (nChars > 2 && name[nChars - 2] == 59) //0x3B = 59 = ';' in ASCII
@@ -437,15 +476,15 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     {
                         //new path name
                         string newPath = $"{path}/{nameString}"; // sprintf is the string format for C. While the syntax looks different, the functionality is supposed to be the same.
-                        if (originalIso[(int)(sectorSize * (lba + i) + dataOffset + position + 25)] == 2) // 0x002 = 2
+                        if (originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 25)] == 2) // 0x002 = 2
                         {
                             //Recursive Search Through Folders
 
                             // 0x019 = 25, Bitwise & in C compares two bytes for equality.
-                            uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + position + 2), 4)); // 0x002 = 2
-                            uint newLen = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + position + 10), 4)); // 0x00A = 10
+                            uint newLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 2)..(int)(sectorSize * (lba + i) + dataOffset + position + 6)]); // 0x002 = 2
+                            uint newLen = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 10)..(int)(sectorSize * (lba + i) + dataOffset + position + 14)]); // 0x00A = 10
 
-                            ulong found = Search(originalIso, fileName, newPath, newLBA, newLen);
+                            ulong found = await Search(fileName, newPath, newLBA, newLen);
 
                             if (found != 0)
                             {
@@ -456,6 +495,9 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                         else if (fileName.Equals(newPath, StringComparison.InvariantCultureIgnoreCase))
                         {
                             // file found
+                            SearchTime += DateTime.Now.Ticks - start;
+                            if (!filesForReplacement.ContainsKey((ulong)((lba + i) * sectorSize + dataOffset + position)))
+                                filesForReplacement.Add((ulong)((lba + i) * sectorSize + dataOffset + position), fileName);
                             return (ulong)((lba + i) * sectorSize + dataOffset + position);
                         }
                     }
@@ -468,6 +510,8 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
         static void PathTable(Span<byte> originalIso, uint lba, uint len, uint lbaOld, int diff, bool sw)
         {
+            long start = DateTime.Now.Ticks;
+
             uint nBytes;
 
             for (uint pos = 0; pos < len; pos += 8 + nBytes + (nBytes & 0x1)) //0x01 = 1 Oh and this one is actually used as a bit-wise & so I'm leaving it in hex
@@ -508,10 +552,15 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     }
                 }
             }
+            
+            PathTableTime += DateTime.Now.Ticks - start;
+
         }
 
         static void TOC(Span<byte> originalIso, uint lba, uint len, ulong found, uint lbaOld, int diff)
         {
+            long start = DateTime.Now.Ticks;
+
             // total sectors
             long totalSectors = (len + sectorSize - 1) / sectorSize;
 
@@ -571,6 +620,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     }
                 }
             }
+            TOCTime += DateTime.Now.Ticks - start;
         }
 
         static uint ChangeEndian(uint value)
@@ -578,23 +628,35 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             return BitConverter.ToUInt32(BitConverter.GetBytes(value).Reverse().ToArray());
         }
 
-        static Span<byte> ExchangeSectors(Span<byte> image, int offset, int originalFileSectors, in Span<byte> dataToExchange)
+        static void ExchangeSectors(int offset, int originalFileSectors, in Span<byte> dataToExchange)
         {
-            return new Span<byte>(
-                        image.Slice(0, (int)(offset * sectorSize)).ToArray()
+            while(fileLock) 
+            {
+                Thread.Sleep(rngGenerator.Next(0, 10));
+                //Wait for file to be unlocked
+            }
+            fileLock = true;
+            long start = DateTime.Now.Ticks;
+            originalIsoFile = 
+                        originalIsoFile[0..(int)(offset * sectorSize)]
                             .Concat(ConvertToSectors(dataToExchange))
-                            .Concat(image.Slice((int)(sectorSize * (offset + originalFileSectors))).ToArray())
-                            .ToArray());
+                            .Concat(originalIsoFile[(int)(sectorSize * (offset + originalFileSectors))..^0])
+                            .ToArray();
+            ExchangeTime += DateTime.Now.Ticks - start;
+            fileLock = false;
         }
 
         static byte[] ConvertToSectors(Span<byte> fileData)
         {
+            long start = DateTime.Now.Ticks;
             if (fileData.Length % sectorSize == 0)
             {
+                ConversionTime += DateTime.Now.Ticks - start;
                 return fileData.ToArray();
             }
             byte[] bytePadding = new byte[sectorSize - fileData.Length % sectorSize];
             Array.Fill<byte>(bytePadding, 0);
+            ConversionTime += DateTime.Now.Ticks - start;
             return fileData.ToArray().Concat(bytePadding).ToArray();
         }
     }
