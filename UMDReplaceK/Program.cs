@@ -11,7 +11,7 @@ namespace ScriptFileMapper
     static class UMDReplace
     {
         //Version Constants
-        const string VERSION = "2020105K";
+        const string VERSION = "2022048K";
 
         //Int Constants
         const short DESCRIPTOR_LBA = 16; // 16 = 0x010 = LBA of the first volume descriptor
@@ -46,11 +46,6 @@ namespace ScriptFileMapper
 
         static bool fileLock = false;
 
-        static long SearchTime = 0;
-        static long PathTableTime = 0;
-        static long TOCTime = 0;
-        static long ExchangeTime = 0;
-        static long ConversionTime = 0;
         static byte[] originalIsoFile;
         static byte[] newIsoFile;
         static Dictionary<string, ulong> filesForReplacement = new Dictionary<string, ulong>();
@@ -247,34 +242,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectorCount - oldFileSectorCount));
 
             //As a change from the original C code, we won't be creating a duplicate file just for reading as we update since we're storing the whole file in memory.
-            //That said, I have left the equivalent C# code commented out below if you want that functionality brought back for some reason.
             uint lba = fileLBA;
-
-            /*
-            if (diff != 0)
-            {
-                //create the new image
-                System.Console.WriteLine("- creating temporal image");
-                FileStream outputStream = File.Create(name);
-                uint lba = 0;
-                //update the previous sectors
-                System.Console.WriteLine("- updating previous data sectors");
-                uint maxim = fileLBA;
-                uint count = 0;
-                for(uint i=0;i < fileLBA; i += count, lba += count)
-                {
-                    count = maxim >= BLOCKSIZE ? BLOCKSIZE : maxim; maxim -= count;
-                    using (BinaryWriter writer = new BinaryWriter(outputStream))
-                    {
-                        writer.Write(originalIsoFile.GetRange((int)i, (int)count).ToArray());
-                    }
-                }
-            }
-            else 
-            {
-                lba = fileLBA;
-            }
-            */
 
             // update the new file
 
@@ -288,9 +256,6 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 {
                     ExchangeEqualSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
                 }
-
-                //Inject the new sectors in to the place where the old ones used to sit.
-                //ExchangeSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
             }
 
             if (newFileSize != oldFileSize)
@@ -304,10 +269,8 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 for (int i = 0; i < 4; i++)
                 {
                     //Replace the old little endian bytes
-                    //originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i]; //0x0A = 10
                     newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i];
                     //Replace the old big endian bytes
-                    //originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i]; //0x0E = 14 
                     newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i];
                 }
             }
@@ -323,10 +286,8 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 for (int i = 0; i < 4; i++)
                 {
                     //Replace the old little endian bytes
-                    //originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i]; //0x0A = 10
                     newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i];
                     //Replace the old big endian bytes
-                    //originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i]; //0x0E = 14 
                     newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i];
                 }
 
@@ -335,9 +296,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 //Unsure about this next block
                 for (int i = 0; i < 4; i++)
                 {
-                    //uint tblLen = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
                     uint tblLen = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
-                    //uint tblLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
                     uint tblLBA = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
 
                     if (tblLBA != 0)
@@ -353,12 +312,10 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 // update the file/folder LBAs
                 System.Console.WriteLine("- updating entire TOCs");
 
-                //TOC(originalIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
                 TOC(newIsoFile, rootLba, rootLength, foundPosition, fileLBA, diff);
 
             }
-
-            //return originalIsoFile;
+            
             return newIsoFile;
         }
 
@@ -455,7 +412,6 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
         static async Task<ulong> Search(string fileName, string path, uint lba, uint len)
         {
-            long start = DateTime.Now.Ticks;
             ulong totalSectors = (ulong)((len + sectorSize - 1) / sectorSize);
             for (uint i = 0; i < totalSectors; i++)
             {
@@ -511,7 +467,6 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                         else if (fileName.Equals(newPath, StringComparison.InvariantCultureIgnoreCase))
                         {
                             // file found
-                            SearchTime += DateTime.Now.Ticks - start;
                             if (!filesForReplacement.ContainsKey(fileName))
                                 filesForReplacement.Add(fileName, (ulong)((lba + i) * sectorSize + dataOffset + position));
                             return (ulong)((lba + i) * sectorSize + dataOffset + position);
@@ -526,8 +481,6 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
         static void PathTable(Span<byte> originalIso, uint lba, uint len, uint lbaOld, int diff, bool sw)
         {
-            long start = DateTime.Now.Ticks;
-
             uint nBytes;
 
             for (uint pos = 0; pos < len; pos += 8 + nBytes + (nBytes & 0x1)) //0x01 = 1 Oh and this one is actually used as a bit-wise & so I'm leaving it in hex
@@ -568,15 +521,10 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     }
                 }
             }
-            
-            PathTableTime += DateTime.Now.Ticks - start;
-
         }
 
         static void TOC(Span<byte> originalIso, uint lba, uint len, ulong found, uint lbaOld, int diff)
         {
-            long start = DateTime.Now.Ticks;
-
             // total sectors
             long totalSectors = (len + sectorSize - 1) / sectorSize;
 
@@ -636,30 +584,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     }
                 }
             }
-            TOCTime += DateTime.Now.Ticks - start;
         }
 
         static uint ChangeEndian(uint value)
         {
             return BitConverter.ToUInt32(BitConverter.GetBytes(value).Reverse().ToArray());
-        }
-
-        static void ExchangeSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
-        {
-            while(fileLock) 
-            {
-                Thread.Sleep(rngGenerator.Next(0, 10));
-                //Wait for file to be unlocked
-            }
-            fileLock = true;
-            long start = DateTime.Now.Ticks;
-            originalIsoFile = 
-                        originalIsoFile[0..(int)(offset * sectorSize)]
-                            .Concat(dataToExchange)
-                            .Concat(originalIsoFile[(int)(sectorSize * (offset + originalFileSectors))..^0])
-                            .ToArray();
-            ExchangeTime += DateTime.Now.Ticks - start;
-            fileLock = false;
         }
 
         static void ExchangeEqualSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
@@ -696,15 +625,10 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
         static async Task<byte[]> ConvertToSectors(byte[] fileData)
         {
-            long start = DateTime.Now.Ticks;
             if (fileData.Length % sectorSize == 0)
-            {
-                ConversionTime += DateTime.Now.Ticks - start;
                 return fileData.ToArray();
-            }
             byte[] bytePadding = new byte[sectorSize - fileData.Length % sectorSize];
             Array.Fill<byte>(bytePadding, 0);
-            ConversionTime += DateTime.Now.Ticks - start;
             return fileData.ToArray().Concat(bytePadding).ToArray();
         }
 
