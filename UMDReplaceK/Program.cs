@@ -52,7 +52,12 @@ namespace ScriptFileMapper
         static long ExchangeTime = 0;
         static long ConversionTime = 0;
         static byte[] originalIsoFile;
-        static Dictionary<ulong, string> filesForReplacement = new Dictionary<ulong, string>();
+        static Dictionary<string, ulong> filesForReplacement = new Dictionary<string, ulong>();
+        static Dictionary<string, uint> oldFileSizes = new Dictionary<string, uint>();
+        static Dictionary<string, uint> oldFileSectorCounts = new Dictionary<string, uint>();
+        static Dictionary<string, uint> newFileSizes = new Dictionary<string, uint>();
+        static Dictionary<string, uint> newFileSectorCounts = new Dictionary<string, uint>();
+        static Dictionary<string, byte[]> newFileSectors = new Dictionary<string, byte[]>();
         static uint rootLba = 0;
         static uint rootLength = 0;
         static Random rngGenerator = new Random();
@@ -117,8 +122,12 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             rootLba = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA + 4)]);
             rootLength = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE + 4)]);
 
-            Task[] searchQueue = new Task[args.Length/2];            
 
+            //Create a queue of search tasks to find all the files in the iso.
+            Task[] searchQueue = new Task[args.Length/2];
+            Task[] newFilePrepQueue = new Task[args.Length / 2];
+
+            //Locate all the old files while also preparing the new files for insertion.
             for (int i = 1; i < args.Length; i += 2)
             {
                 //Run the Replace
@@ -132,10 +141,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 // change all backslashes by slashes in 'oldname'
                 oldName = oldName.Replace("\\", "/");
                 searchQueue[i/2] = Search(oldName, string.Empty, rootLba, rootLength);
-                //searchQueue[i / 2].Start();
+                newFilePrepQueue[i/2] = PrepareNewFileForInsertion(args[i+1].Replace("\"", ""));
             }
 
             Task.WaitAll(searchQueue);
+            Task.WaitAll(newFilePrepQueue);
 
             filesForReplacement = filesForReplacement.OrderBy(fileNameLocation => fileNameLocation.Value).ToDictionary(pair => pair.Key, pair => pair.Value);
 
@@ -143,7 +153,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             {
                 int originalSize = originalIsoFile.Length;
                 //Run the Replace
-                System.Console.WriteLine("- replacing file " + args[i].Replace("\"", ""));
+                Console.WriteLine("- replacing file " + args[i].Replace("\"", ""));
                 originalIsoFile = await Replace(args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
                 diff += originalIsoFile.Length - originalSize;
                 if (diff != 0)
@@ -198,28 +208,13 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
         static async Task<byte[]> Replace(string oldName, string newName)
         {
-            GetFileReadStream(newName, out FileStream inputFileStream);
-
-            // Prepare buffer
-            byte[] newFileBytes = new byte[inputFileStream.Length];
-
-            try
-            {
-                _ = inputFileStream.Read(newFileBytes);
-            }
-            finally
-            {
-                inputFileStream.Dispose();
-            }
-
-
             // get data from the primary volume descriptor
             uint imageSectors = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4)]);
             long pos = sectorSize * DESCRIPTOR_LBA;
             
             // get new data from the new file
-            uint newFileSize = (uint)(newFileBytes.Length);
-            uint newFileSectors = (uint)((newFileSize + sectorData - 1) / sectorData);
+            uint newFileSize = newFileSizes[newName];
+            uint newFileSectorCount = newFileSectorCounts[newName];
 
             // 'oldName' must start with a path separator
             if ((oldName[0] != '/') && (oldName[0] != '\\'))
@@ -231,12 +226,22 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             oldName = oldName.Replace("\\", "/");
 
             // search 'oldname' in the image
-            ulong foundPosition = await Search(oldName, string.Empty, rootLba, rootLength);
+            //ulong foundPosition = await Search(oldName, string.Empty, rootLba, rootLength);
 
-            if (foundPosition == 0)
-            {
+            //if (foundPosition == 0)
+            //{
+            //    Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
+            //}
+
+
+            /////
+            ///
+
+            if(!filesForReplacement.ContainsKey(oldName))
                 Environment.Exit(FILE_NOT_FOUND_EXIT_CODE);
-            }
+            ulong foundPosition = filesForReplacement[oldName];
+
+            /////
 
             uint foundLBA = (uint)(foundPosition / sectorSize);
             uint foundOffset = (uint)(foundPosition % sectorSize);
@@ -247,7 +252,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             uint fileLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 2)..(int)(sectorSize * foundLBA + foundOffset + 6)]); //0x02 = 2
 
             //size difference in sectors
-            int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectors - oldFileSectors));
+            int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectorCount - oldFileSectors));
 
             //As a change from the original C code, we won't be creating a duplicate file just for reading as we update since we're storing the whole file in memory.
             //That said, I have left the equivalent C# code commented out below if you want that functionality brought back for some reason.
@@ -281,10 +286,10 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
             // update the new file
 
-            if (newFileSectors != 0)
+            if (newFileSectorCount != 0)
             {
                 //Inject the new sectors in to the place where the old ones used to sit.
-                ExchangeSectors((int)(lba++), (int)oldFileSectors, newFileBytes);
+                ExchangeSectors((int)(lba++), (int)oldFileSectors, newFileSectors[newName]);
             }
 
             if (newFileSize != oldFileSize)
@@ -496,8 +501,8 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                         {
                             // file found
                             SearchTime += DateTime.Now.Ticks - start;
-                            if (!filesForReplacement.ContainsKey((ulong)((lba + i) * sectorSize + dataOffset + position)))
-                                filesForReplacement.Add((ulong)((lba + i) * sectorSize + dataOffset + position), fileName);
+                            if (!filesForReplacement.ContainsKey(fileName))
+                                filesForReplacement.Add(fileName, (ulong)((lba + i) * sectorSize + dataOffset + position));
                             return (ulong)((lba + i) * sectorSize + dataOffset + position);
                         }
                     }
@@ -628,7 +633,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             return BitConverter.ToUInt32(BitConverter.GetBytes(value).Reverse().ToArray());
         }
 
-        static void ExchangeSectors(int offset, int originalFileSectors, in Span<byte> dataToExchange)
+        static void ExchangeSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
         {
             while(fileLock) 
             {
@@ -639,14 +644,14 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             long start = DateTime.Now.Ticks;
             originalIsoFile = 
                         originalIsoFile[0..(int)(offset * sectorSize)]
-                            .Concat(ConvertToSectors(dataToExchange))
+                            .Concat(dataToExchange)
                             .Concat(originalIsoFile[(int)(sectorSize * (offset + originalFileSectors))..^0])
                             .ToArray();
             ExchangeTime += DateTime.Now.Ticks - start;
             fileLock = false;
         }
 
-        static byte[] ConvertToSectors(Span<byte> fileData)
+        static async Task<byte[]> ConvertToSectors(byte[] fileData)
         {
             long start = DateTime.Now.Ticks;
             if (fileData.Length % sectorSize == 0)
@@ -658,6 +663,38 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             Array.Fill<byte>(bytePadding, 0);
             ConversionTime += DateTime.Now.Ticks - start;
             return fileData.ToArray().Concat(bytePadding).ToArray();
+        }
+
+        static async Task PrepareNewFileForInsertion(string newFileName)
+        {
+            GetFileReadStream(newFileName, out FileStream inputFileStream);
+
+            // Prepare buffer
+            byte[] newFileBytes = new byte[inputFileStream.Length];
+
+            try
+            {
+                _ = inputFileStream.Read(newFileBytes);
+            }
+            finally
+            {
+                inputFileStream.Dispose();
+            }
+
+            // get new data from the new file
+
+            uint newFileSize = (uint)newFileBytes.Length;
+            newFileSizes.Add(newFileName, newFileSize);
+            uint newFileSectorCount = (uint)((newFileSize + sectorData - 1) / sectorData);
+            newFileSectorCounts.Add(newFileName, newFileSectorCount);
+
+            if(newFileSectorCount != 0)
+                newFileSectors.Add(newFileName, await ConvertToSectors(newFileBytes));
+        }
+        
+        static async Task PrepareOldFileForReplacement(string normalizedOldFileName)
+        {
+            await Search(normalizedOldFileName, string.Empty, rootLba, rootLength);
         }
     }
 }
