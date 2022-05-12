@@ -10,10 +10,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x86 --self-contained false -p:PublishSingleFile=true -p: -o win-x86
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x86 --self-contained false -p:PublishSingleFile=true -o win-x86
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x86 --self-contained true -p:PublishSingleFile=true -o win-x86-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x86 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o win-x86-sc
       - name: Rename executables
         run: |
           mv win-x86/UMDReplaceK.exe win-x86/UMDReplaceK-win32.exe
@@ -36,10 +36,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p: -o win-x64
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o win-x64
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o win-x64-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o win-x64-sc
       - name: Rename executables
         run: |
           mv win-x64/UMDReplaceK.exe win-x64/UMDReplaceK-win64.exe
@@ -62,10 +62,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained false -p:PublishSingleFile=true -p: -o win-arm64
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained false -p:PublishSingleFile=true -o win-arm64
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -o win-arm64-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o win-arm64-sc
       - name: Rename executables
         run: |
           mv win-arm64/UMDReplaceK.exe win-arm64/UMDReplaceK-winarm64.exe
@@ -74,12 +74,12 @@ jobs:
         uses: djn24/add-asset-to-release@v1
         with:
           token: ${{secrets.GITHUB_TOKEN}}
-          path: 'win-x64/UMDReplaceK-winarm64.exe'
+          path: 'win-arm64/UMDReplaceK-winarm64.exe'
       - name: Add portable build to release
         uses: djn24/add-asset-to-release@v1
         with:
           token: ${{secrets.GITHUB_TOKEN}}
-          path: 'win-x64-sc/UMDReplaceK-Portable-winarm64.exe'
+          path: 'win-arm64-sc/UMDReplaceK-Portable-winarm64.exe'
 
   build-release-linux:
     name: Build Linux Releases
@@ -88,10 +88,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-x64 --self-contained false -p:PublishSingleFile=true -p: -o linux-x64
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-x64 --self-contained false -p:PublishSingleFile=true -o linux-x64
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o linux-x64-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o linux-x64-sc
       - name: Rename executables
         run: |
           mv linux-x64/UMDReplaceK linux-x64/UMDReplaceK-linux
@@ -114,10 +114,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained false -p:PublishSingleFile=true -p: -o linux-arm64
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained false -p:PublishSingleFile=true -o linux-arm64
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -o linux-arm64-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o linux-arm64-sc
       - name: Rename executables
         run: |
           mv linux-arm64/UMDReplaceK linux-arm64/UMDReplaceK-linux-arm
@@ -140,10 +140,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-x64 --self-contained false -p:PublishSingleFile=true -p: -o osx-x64
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-x64 --self-contained false -p:PublishSingleFile=true -o osx-x64
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -o osx-x64-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o osx-x64-sc
       - name: Rename executables
         run: |
           mv osx-x64/UMDReplaceK osx-x64/UMDReplaceK-osx
@@ -166,10 +166,10 @@ jobs:
       - uses: actions/checkout@v1
       - name: Build UMDReplaceK for normal Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained false -p:PublishSingleFile=true -p: -o osx-arm64
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained false -p:PublishSingleFile=true -o osx-arm64
       - name: Build UMDReplaceK for portable Release
         run: |
-          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -o osx-arm64-sc
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o osx-arm64-sc
       - name: Rename executables
         run: |
           mv osx-arm64/UMDReplaceK osx-arm64/UMDReplaceK-osx-arm
