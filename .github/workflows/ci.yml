@@ -55,6 +55,32 @@ jobs:
           token: ${{secrets.GITHUB_TOKEN}}
           path: 'win-x64-sc/UMDReplaceK-Portable-win64.exe'
 
+  build-release-win-arm64:
+    name: Build Windows arm64 Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained false -p:PublishSingleFile=true -p: -o win-arm64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -o win-arm64-sc
+      - name: Rename executables
+        run: |
+          mv win-arm64/UMDReplaceK.exe win-arm64/UMDReplaceK-winarm64.exe
+          mv win-arm64-sc/UMDReplaceK.exe win-arm64-sc/UMDReplaceK-Portable-winarm64.exe
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-x64/UMDReplaceK-winarm64.exe'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-x64-sc/UMDReplaceK-Portable-winarm64.exe'
+
   build-release-linux:
     name: Build Linux Releases
     runs-on: ubuntu-latest
@@ -81,6 +107,32 @@ jobs:
           token: ${{secrets.GITHUB_TOKEN}}
           path: 'linux-x64-sc/UMDReplaceK-Portable-linux'
 
+  build-release-linux-arm:
+    name: Build Linux arm Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained false -p:PublishSingleFile=true -p: -o linux-arm64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -o linux-arm64-sc
+      - name: Rename executables
+        run: |
+          mv linux-arm64/UMDReplaceK linux-arm64/UMDReplaceK-linux-arm
+          mv linux-arm64-sc/UMDReplaceK linux-arm64-sc/UMDReplaceK-Portable-linux-arm
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'linux-arm64/UMDReplaceK-linux-arm'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'linux-arm64-sc/UMDReplaceK-Portable-linux-arm'
+
   build-release-osx:
     name: Build macOS Releases
     runs-on: ubuntu-latest
@@ -106,3 +158,29 @@ jobs:
         with:
           token: ${{secrets.GITHUB_TOKEN}}
           path: 'osx-x64-sc/UMDReplaceK-Portable-osx'
+
+  build-release-osx-arm:
+    name: Build macOS M1 Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained false -p:PublishSingleFile=true -p: -o osx-arm64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -o osx-arm64-sc
+      - name: Rename executables
+        run: |
+          mv osx-arm64/UMDReplaceK osx-arm64/UMDReplaceK-osx-arm
+          mv osx-arm64-sc/UMDReplaceK osx-arm64-sc/UMDReplaceK-Portable-osx-arm
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'osx-arm64/UMDReplaceK-osx-arm'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'osx-arm64-sc/UMDReplaceK-Portable-osx-arm'
