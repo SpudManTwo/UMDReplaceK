@@ -1,5 +1,7 @@
 ﻿name: Build UMDReplaceK Release Assets
-on: release
+on: 
+  release:
+    types: [published]
 
 jobs:
 
