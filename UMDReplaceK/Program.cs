@@ -11,28 +11,20 @@ namespace ScriptFileMapper
     static class UMDReplace
     {
         //Version Constants
-        const string VERSION = "2022048K";
+        const string VERSION = "20220519K";
 
         //Int Constants
         const short DESCRIPTOR_LBA = 16; // 16 = 0x010 = LBA of the first volume descriptor
         const short TOTAL_SECTORS = 80; // 80 = 0x050 = total number of sectors in the UMD
-        const short ROOT_FOLDER_LBA = 158; // 158 = 0x09E LBA of the root folder
-        const short ROOT_SIZE = 166; // 166 = 0x0A6 size of the root folder
-        const short TABLE_PATH_LEN = 132; // 132 = 0x084 size of the first table path
         const short TABLE_PATH_LBA = 140; // 132 = 0x08C LBA of the first table path
 
-        //Long Constants
-        const ulong DESCRIPTOR_SIG_1 = 335558014681857; // 335558014681857 = 0x0001313030444301ULL volume descriptor signatures
-        const ulong DESCRIPTOR_SIG_2 = 335558014682111; // 335558014681857 = 0x00013130304443FFULL
-
         //M0 Constants
-        const uint sectorSize = 2048;// 2048 = 0x800 = LEN_SECTOR_M0 = sector size
+        const long sectorSize = 2048;// 2048 = 0x800 = LEN_SECTOR_M0 = sector size
         const uint sectorData = 2048; // 2048 = 0x800 = POS_DATA_M0 = sector data length
         const uint dataOffset = 0; // 0 = 0x000 = LEN_DATA_M0 = sector data start
 
         //File Input/Output Constants
         const string TMPNAME = "umd-replacek.$"; // temporal name
-        const int BLOCKSIZE = 16384; // sectors to read/write at once
 
         //Non-Constant Ints
         static ushort mode;        // image mode
@@ -46,8 +38,8 @@ namespace ScriptFileMapper
 
         static bool fileLock = false;
 
-        static byte[] originalIsoFile;
-        static byte[] newIsoFile;
+        static byte[][] originalIsoFile;
+        static byte[][] newIsoFile;
         static Dictionary<string, ulong> filesForReplacement = new Dictionary<string, ulong>();
         static Dictionary<string, uint> oldFileSizes = new Dictionary<string, uint>();
         static Dictionary<string, uint> oldFileSectorCounts = new Dictionary<string, uint>();
@@ -57,6 +49,7 @@ namespace ScriptFileMapper
         static uint rootLba = 0;
         static uint rootLength = 0;
         static Random rngGenerator = new Random();
+        static long originalIsoFileLength;
 
         static async Task Main(string[] args)
         {
@@ -99,14 +92,37 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             // Prepare file for reading into buffer
             GetFileReadStream(args[0].Replace("\"", ""), out FileStream inputFileStream);
 
+            originalIsoFileLength = inputFileStream.Length;
+
             // Prepare buffer
-            originalIsoFile = new byte[inputFileStream.Length];
+            if (inputFileStream.Length > Array.MaxLength) //Fun fact for the C# curious, Array.MaxLength > int.MaxValue at the time of writing, so we need to use Array.MaxLength specifically
+			{
+                //If the ROM is bigger than a singular array supports, we use multiple arrays.
+                //This is for PS2 support as requested by IlDucci as this tool works for both PSP and PS2 apparently.
+                originalIsoFile = new byte[(inputFileStream.Length / Array.MaxLength)+1][];
+                for(int i=0;i<originalIsoFile.Length-1;i++)
+                    originalIsoFile[i] = new byte[Array.MaxLength];
+                originalIsoFile[^1] = new byte[inputFileStream.Length % Array.MaxLength];
+            }
+            else
+			{
+                //This is the tried and true, singular array support that we're used to PSP.
+                originalIsoFile = new byte[][]
+                {
+                    new byte[inputFileStream.Length]
+                };
+			}
 
             // Read file into Buffer
             try
             {
-                inputFileStream.Read(originalIsoFile);
-                inputFileStream.Flush();
+                for (int i = 0; inputFileStream.Position < inputFileStream.Length; i++)
+				{
+                    //With the new addition of 2 dimensional arrays, we're going to await this call to make sure it finishes.
+                    await inputFileStream.ReadAsync(originalIsoFile[i]);
+                    //And then flush the stream immediately after since the buffer is going to be very full.
+                    inputFileStream.Flush();
+                }
             }
             finally
             {
@@ -115,12 +131,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
             bool wasChanged = false;
             long diff = 0;
-            rootLba = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_FOLDER_LBA + 4)]);
-            rootLength = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + ROOT_SIZE + 4)]);
-
+            rootLba = BitConverter.ToUInt32(originalIsoFile[0][32926..32930]);
+            rootLength = BitConverter.ToUInt32(originalIsoFile[0][32934..32938]);
 
             //Create a queue of search tasks to find all the files in the iso.
-            Task[] oldFilePrepQueue = new Task[args.Length/2];
+            Task[] oldFilePrepQueue = new Task[args.Length / 2];
             Task[] newFilePrepQueue = new Task[args.Length / 2];
 
             //Locate all the old files while also preparing the new files for insertion.
@@ -145,22 +160,30 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 
             filesForReplacement = filesForReplacement.OrderByDescending(fileNameLocation => fileNameLocation.Value).ToDictionary(pair => pair.Key, pair => pair.Value);
 
-            newIsoFile = new byte[originalIsoFile.Length];
+            newIsoFile = new byte[originalIsoFile.Length][];
 
-            Array.Copy(originalIsoFile, newIsoFile, originalIsoFile.Length);
+            for (int i = 0; i < originalIsoFile.Length; i++)
+            {
+                newIsoFile[i] = new byte[originalIsoFile[i].Length];
+                Array.Copy(originalIsoFile[i], newIsoFile[i], originalIsoFile[i].Length);
+            }
+
+            Task[] replaceTasks = new Task[oldFilePrepQueue.Length];
 
             for (int i = 1; i < args.Length; i += 2)
             {
-                int originalSize = newIsoFile.Length;
+                long originalSize = newIsoFile.Sum(underlyingArray => (long)underlyingArray.Length);
                 //Run the Replace
                 Console.WriteLine("- replacing file " + args[i].Replace("\"", ""));
-                newIsoFile = await Replace(args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
-                diff += newIsoFile.Length - originalSize;
+                replaceTasks[i/2] = Replace(args[i].Replace("\"", ""), args[i + 1].Replace("\"", ""));
+                diff += newIsoFile.Sum(underlyingArray => (long)underlyingArray.Length) - originalSize;
                 if (diff != 0)
                 {
                     wasChanged = true;
                 }
             }
+
+            Task.WaitAll(replaceTasks);
 
             //Delete the old file now that we've got all that we need.
             System.IO.File.Delete(args[0]);
@@ -172,9 +195,12 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             try
             {
                 //Writing new iso file
-                using (BinaryWriter binaryWriter = new BinaryWriter(outputStream))
+                using BinaryWriter binaryWriter = new BinaryWriter(outputStream);
+                for(int i = 0; i < newIsoFile.Length; i++)
                 {
-                    binaryWriter.Write(newIsoFile);
+                    //Loop through all byte arrays as necessary and flush the buffer after each byte array since the size of the array could be massive
+                    binaryWriter.Write(newIsoFile[i]);
+                    binaryWriter.Flush();                    
                 }
             }
             finally
@@ -206,11 +232,10 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             Environment.Exit(SUCCESS_EXIT_CODE);
         }
 
-        static async Task<byte[]> Replace(string oldName, string newName)
+        static async Task<byte[][]> Replace(string oldName, string newName)
         {
             // get data from the primary volume descriptor
-            uint imageSectors = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4)]);
-            long pos = sectorSize * DESCRIPTOR_LBA;
+            uint imageSectors = BitConverter.ToUInt32(newIsoFile[0][32848..32852]);
             
             // get new data from the new file
             uint newFileSize = newFileSizes[newName];
@@ -235,8 +260,12 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             uint oldFileSize = oldFileSizes[oldName]; //Since we've already calculated this, just pull the values
             uint oldFileSectorCount = oldFileSectorCounts[oldName];
 
-            //Calculate the LBA
-            uint fileLBA = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 2)..(int)(sectorSize * foundLBA + foundOffset + 6)]); //0x02 = 2
+            //Calculate the LBA's position in the array/s
+            
+            byte[] fileLBABytes = new byte[4];
+            for (long fileLbaArrayPos = sectorSize * foundLBA + foundOffset + 2, i = 0; i < 4; fileLbaArrayPos++, i++)
+                fileLBABytes[i] = newIsoFile[fileLbaArrayPos / Array.MaxLength][fileLbaArrayPos % Array.MaxLength]; // We have to loop around the array like this because the bytes we're looking for could end up flowing across two of our internal arrays.
+            uint fileLBA = BitConverter.ToUInt32(fileLBABytes); //0x02 = 2
 
             //size difference in sectors
             int diff = BitConverter.ToInt32(BitConverter.GetBytes(newFileSectorCount - oldFileSectorCount));
@@ -250,11 +279,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             {
                 if(newFileSectorCount != oldFileSectorCount)
                 {
-                    ExchangeInequalSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
+                    ExchangeInequalSectors(lba++, oldFileSectorCount, newFileSectors[newName]);
                 }
                 else
                 {
-                    ExchangeEqualSectors((int)(lba++), (int)oldFileSectorCount, newFileSectors[newName]);
+                    ExchangeEqualSectors(lba++, newFileSectors[newName]);
                 }
             }
 
@@ -266,12 +295,12 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 uint bigEndian = ChangeEndian(littleEndian);
                 byte[] littleEndianBytes = BitConverter.GetBytes(littleEndian);
                 byte[] bigEndianBytes = BitConverter.GetBytes(bigEndian);
-                for (int i = 0; i < 4; i++)
+                for (long littleEndianPosition = sectorSize * foundLBA + foundOffset + 10, byteArrayIndex = 0; byteArrayIndex < 4; byteArrayIndex++, littleEndianPosition++)
                 {
                     //Replace the old little endian bytes
-                    newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10 + i)] = littleEndianBytes[i];
+                    newIsoFile[littleEndianPosition/Array.MaxLength][littleEndianPosition%Array.MaxLength] = littleEndianBytes[byteArrayIndex];
                     //Replace the old big endian bytes
-                    newIsoFile[(int)(sectorSize * foundLBA + foundOffset + 14 + i)] = bigEndianBytes[i];
+                    newIsoFile[(littleEndianPosition+4) / Array.MaxLength][(littleEndianPosition+4) % Array.MaxLength] = bigEndianBytes[byteArrayIndex];
                 }
             }
 
@@ -283,12 +312,12 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 uint bigEndian = ChangeEndian(littleEndian);
                 byte[] littleEndianBytes = BitConverter.GetBytes(littleEndian);
                 byte[] bigEndianBytes = BitConverter.GetBytes(bigEndian);
-                for (int i = 0; i < 4; i++)
+                for (long littleEndianPosition = sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS, byteArrayIndex = 0; byteArrayIndex < 4; byteArrayIndex++, littleEndianPosition++)
                 {
                     //Replace the old little endian bytes
-                    newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + i)] = littleEndianBytes[i];
+                    newIsoFile[littleEndianPosition / Array.MaxLength][littleEndianPosition % Array.MaxLength] = littleEndianBytes[byteArrayIndex];
                     //Replace the old big endian bytes
-                    newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TOTAL_SECTORS + 4 + i)] = bigEndianBytes[i];
+                    newIsoFile[(littleEndianPosition + 4) / Array.MaxLength][(littleEndianPosition + 4) % Array.MaxLength] = bigEndianBytes[byteArrayIndex];
                 }
 
                 // update the path tables
@@ -296,8 +325,15 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 //Unsure about this next block
                 for (int i = 0; i < 4; i++)
                 {
-                    uint tblLen = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LEN + 4)]);
-                    uint tblLBA = BitConverter.ToUInt32(newIsoFile[(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i)..(int)(sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i + 4)]);
+                    uint tblLen = BitConverter.ToUInt32(newIsoFile[0][32900..32904]);
+
+                    byte[] uIntByteSwap = new byte[4];
+
+                    //As the comments above and below state, we have to loop around bytes in the array like this. See the above explanation.
+                    for (long tblLBAPos = sectorSize * DESCRIPTOR_LBA + dataOffset + TABLE_PATH_LBA + 4 * i, uIntBytePos = 0; uIntBytePos < 4; tblLBAPos++, uIntBytePos++)
+                        uIntByteSwap[uIntBytePos] = newIsoFile[tblLBAPos / Array.MaxLength][tblLBAPos % Array.MaxLength];
+
+                    uint tblLBA = BitConverter.ToUInt32(uIntByteSwap);
 
                     if (tblLBA != 0)
                     {
@@ -416,23 +452,28 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             for (uint i = 0; i < totalSectors; i++)
             {
                 uint nBytes;
-                for (long position = 0; position < sectorData && (dataOffset + position + 4) < originalIsoFile.Length; position += nBytes)
+                for (long position = 0; position < sectorData && (dataOffset + position + 4) < originalIsoFileLength; position += nBytes)
                 {
-                    if (sectorSize * (lba + i) + dataOffset + position >= originalIsoFile.Length)
+                    if (sectorSize * (lba + i) + dataOffset + position >= originalIsoFileLength)
                     {
                         break;
                     }
                     //field size
-                    nBytes = originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position)];
+                    long arrayPos = sectorSize * (lba + i) + dataOffset + position;
+                    nBytes = originalIsoFile[arrayPos/Array.MaxLength][arrayPos%Array.MaxLength];
                     if (nBytes == 0)
                     {
                         break;
                     }
 
                     //name size
-                    byte nChars = originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 32)]; //0x020 = 32
+                    long nCharsPos = sectorSize * (lba + i) + dataOffset + position + 32;
+                    byte nChars = originalIsoFile[nCharsPos/Array.MaxLength][nCharsPos%Array.MaxLength]; //0x020 = 32
+
                     byte[] name = new byte[nChars];
-                    originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 33)..(int)(sectorSize * (lba + i) + dataOffset + position + 33+ nChars)].CopyTo(name, 0);
+                    //As the comments above and below state, we have to loop around bytes in the array like this. See the above explanation.
+                    for (long nameArrayPos = sectorSize * (lba + i) + dataOffset + position + 33, namePos = 0; namePos < name.Length; nameArrayPos++, namePos++)
+                        name[namePos] = originalIsoFile[nameArrayPos / Array.MaxLength][(int)(nameArrayPos % Array.MaxLength)];
 
                     // discard the ";1" final
                     if (nChars > 2 && name[nChars - 2] == 59) //0x3B = 59 = ';' in ASCII
@@ -448,13 +489,27 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     {
                         //new path name
                         string newPath = $"{path}/{nameString}"; // sprintf is the string format for C. While the syntax looks different, the functionality is supposed to be the same.
-                        if (originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 25)] == 2) // 0x002 = 2
+                        long directoryMarkerPos = sectorSize * (lba + i) + dataOffset + position + 25;                        
+                        var normalizedName = newPath.Contains('\0') ? newPath.Substring(0,newPath.IndexOf('\0')) : newPath; //Dear Atlus and Sony, why do you do this to me? Why did you hide a string terminating character in your file name with garbage after?
+
+                        if (originalIsoFile[directoryMarkerPos/Array.MaxLength][directoryMarkerPos%Array.MaxLength] == 2) // 0x002 = 2
                         {
                             //Recursive Search Through Folders
 
+                            byte[] uIntByteSwap = new byte[4];
+
+                            //As the comments above and below state, we have to loop around bytes in the array like this. See the above explanation.
+                            for (long newLbaPos = sectorSize * (lba + i) + dataOffset + position + 2, uIntBytePos = 0; uIntBytePos < 4; newLbaPos++, uIntBytePos++)
+                                uIntByteSwap[uIntBytePos] = originalIsoFile[newLbaPos / Array.MaxLength][(int)(newLbaPos % Array.MaxLength)];
+
                             // 0x019 = 25, Bitwise & in C compares two bytes for equality.
-                            uint newLBA = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 2)..(int)(sectorSize * (lba + i) + dataOffset + position + 6)]); // 0x002 = 2
-                            uint newLen = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * (lba + i) + dataOffset + position + 10)..(int)(sectorSize * (lba + i) + dataOffset + position + 14)]); // 0x00A = 10
+                            uint newLBA = BitConverter.ToUInt32(uIntByteSwap); // 0x002 = 2
+
+                            //As the comments above and below state, we have to loop around bytes in the array like this. See the above explanation.
+                            for (long newLenPos = sectorSize * (lba + i) + dataOffset + position + 10, uIntBytePos = 0; uIntBytePos < 4; newLenPos++, uIntBytePos++)
+                                uIntByteSwap[uIntBytePos] = originalIsoFile[newLenPos / Array.MaxLength][(int)(newLenPos % Array.MaxLength)];
+
+                            uint newLen = BitConverter.ToUInt32(uIntByteSwap); // 0x00A = 10
 
                             ulong found = await Search(fileName, newPath, newLBA, newLen);
 
@@ -463,8 +518,9 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                                 return found;
                             }
                         }
+                        
                         // compare names - case insensitive
-                        else if (fileName.Equals(newPath, StringComparison.InvariantCultureIgnoreCase))
+                        else if (fileName.Equals(normalizedName, StringComparison.InvariantCultureIgnoreCase))
                         {
                             // file found
                             if (!filesForReplacement.ContainsKey(fileName))
@@ -479,25 +535,32 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             return 0;
         }
 
-        static void PathTable(Span<byte> originalIso, uint lba, uint len, uint lbaOld, int diff, bool sw)
+        static void PathTable(byte[][] originalIso, uint lba, uint len, uint lbaOld, int diff, bool sw)
         {
+            long isoLength = originalIso.Sum(underlyingArray => (long)underlyingArray.Length);
+
             uint nBytes;
 
             for (uint pos = 0; pos < len; pos += 8 + nBytes + (nBytes & 0x1)) //0x01 = 1 Oh and this one is actually used as a bit-wise & so I'm leaving it in hex
             {
-                if (sectorSize * lba + dataOffset + pos >= originalIso.Length)
+                if (sectorSize * lba + dataOffset + pos >= isoLength)
                 {
                     break;
                 }
                 //field size
-                nBytes = originalIso[(int)(sectorSize * lba + dataOffset + pos)];
+                long nBytePos = sectorSize * lba + dataOffset + pos;
+                nBytes = originalIso[nBytePos/Array.MaxLength][nBytePos%Array.MaxLength];
                 if (nBytes == 0)
                 {
                     break;
                 }
+                
+                byte[] uIntByteSwap = new byte[4];
+                for (long newLBAPos = sectorSize * lba + dataOffset + pos + 2, uIntBytePos = 0; uIntBytePos < 4; newLBAPos++, uIntBytePos++)
+                    uIntByteSwap[uIntBytePos] = originalIso[newLBAPos / Array.MaxLength][newLBAPos % Array.MaxLength];
 
                 //position
-                uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * lba + dataOffset + pos + 2), 4)); //0x002 = 2
+                uint newLBA = BitConverter.ToUInt32(uIntByteSwap); //0x002 = 2
                 if (sw)
                 {
                     newLBA = ChangeEndian(newLBA);
@@ -515,16 +578,16 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                     byte[] newLBABytes = BitConverter.GetBytes(newLBA);
 
                     //update sectors if needed, 0x002 = 2
-                    for (int i = 0; i < 4; i++)
-                    {
-                        originalIso[(int)(sectorSize * lba + dataOffset + pos + 2 + i)] = newLBABytes[i];
-                    }
+                    for (long newLBAPos = sectorSize * lba + dataOffset + pos + 2, newLBABytesIterator = 0; newLBABytesIterator < 4; newLBAPos++, newLBABytesIterator++)
+                        originalIso[newLBAPos/Array.MaxLength][newLBAPos%Array.MaxLength] = newLBABytes[newLBABytesIterator];
                 }
             }
         }
 
-        static void TOC(Span<byte> originalIso, uint lba, uint len, ulong found, uint lbaOld, int diff)
+        static void TOC(byte[][] originalIso, uint lba, uint len, ulong found, uint lbaOld, int diff)
         {
+            long isoFileLength = originalIso.Sum(underlyingByteArray => (long)underlyingByteArray.Length);
+
             // total sectors
             long totalSectors = (len + sectorSize - 1) / sectorSize;
 
@@ -533,25 +596,32 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                 uint nBytes;
                 for (uint pos = 0; pos < len; pos += nBytes)
                 {
-                    if (sectorSize * (lba + i) + dataOffset + pos >= originalIso.Length)
+                    if (sectorSize * (lba + i) + dataOffset + pos >= isoFileLength)
                     {
                         break;
                     }
+                    long nBytesPos = sectorSize * (lba + i) + dataOffset + pos;
                     //field size
-                    nBytes = originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos)];
+                    nBytes = originalIso[nBytesPos/Array.MaxLength][nBytesPos%Array.MaxLength];
                     if (nBytes == 0)
                     {
                         break;
                     }
 
                     //name size
-                    byte nChars = originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 32)]; //0x020 = 32
-                    Span<byte> name = new Span<byte>(new byte[nChars]);
-                    originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + pos + 33), nChars).CopyTo(name);
+                    long nCharsPos = sectorSize * (lba + i) + dataOffset + pos + 32;
+                    byte nChars = originalIso[nCharsPos/Array.MaxLength][nCharsPos%Array.MaxLength]; //0x020 = 32
+                    byte[] name = new byte[nChars];
+                    for (long nameIsoFilePos = sectorSize * (lba + i) + dataOffset + pos + 33, namePos = 0; namePos < name.Length; nameIsoFilePos++, namePos++)
+                        name[namePos] = originalIso[nameIsoFilePos / Array.MaxLength][nameIsoFilePos % Array.MaxLength];
                     string nameString = Encoding.ASCII.GetString(name);
 
                     // position
-                    uint newLBA = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + pos + 2), 4)); // 0x002 = 2
+                    byte[] uIntByteSwap = new byte[4];
+                    for (long newLBAPos = sectorSize * (lba + i) + dataOffset + pos + 2, uIntByteIterator = 0; uIntByteIterator < 4; newLBAPos++, uIntByteIterator++)
+                        uIntByteSwap[uIntByteIterator] = originalIso[newLBAPos / Array.MaxLength][newLBAPos % Array.MaxLength];
+
+                    uint newLBA = BitConverter.ToUInt32(uIntByteSwap); // 0x002 = 2
 
                     // needed to change a 0-bytes file with more 0-bytes files (same LBA)
                     ulong newfound = (ulong)(lba + i) * sectorSize + dataOffset + pos;
@@ -564,20 +634,24 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
                         byte[] newLBABytes = BitConverter.GetBytes(newLBA);
                         byte[] bigEndianBytes = BitConverter.GetBytes(ChangeEndian(newLBA));
 
-                        for (int endianByte = 0; endianByte < 4; endianByte++)
+                        for (long littleEndianPos = sectorSize * (lba + i) + dataOffset + pos + 2, byteIterator = 0; byteIterator < 4; byteIterator++, littleEndianPos++)
                         {
-                            originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 2 + endianByte)] = newLBABytes[endianByte]; // 0x002 = 2
-                            originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 6 + endianByte)] = bigEndianBytes[endianByte]; // 0x006 = 6
+                            originalIso[littleEndianPos/ Array.MaxLength][littleEndianPos % Array.MaxLength] = newLBABytes[byteIterator]; // 0x002 = 2
+                            originalIso[(littleEndianPos + 4)/Array.MaxLength][(littleEndianPos+4)%Array.MaxLength] = bigEndianBytes[byteIterator]; // 0x006 = 6
                         }
                     }
 
                     // check the name except for '.' and '..' entries
                     if ((nChars != 1) || ((name[0] != 0) && (name[0] != 1))) // 0x0 = 0 and 0x1 = repeat previous character in ASCII
                     {
+                        long folderPosition = sectorSize * (lba + i) + dataOffset + pos + 25;
                         //recursive update in folders
-                        if (originalIso[(int)(sectorSize * (lba + i) + dataOffset + pos + 25)] == 2) //0x02 = 2
+                        if (originalIso[folderPosition/Array.MaxLength][folderPosition%Array.MaxLength] == 2) //0x02 = 2
                         {
-                            uint newLen = BitConverter.ToUInt32(originalIso.Slice((int)(sectorSize * (lba + i) + dataOffset + pos + 10), 4)); // 0x00A = 10
+                            for (long newLenPos = sectorSize * (lba + i) + dataOffset + pos + 10, uIntByteIterator = 0; uIntByteIterator < 4; newLenPos++, uIntByteIterator++)
+                                uIntByteSwap[uIntByteIterator] = originalIsoFile[newLenPos / Array.MaxLength][newLenPos % Array.MaxLength];
+
+                            uint newLen = BitConverter.ToUInt32(uIntByteSwap); // 0x00A = 10
 
                             TOC(originalIso, newLBA, newLen, found, lbaOld, diff);
                         }
@@ -591,7 +665,7 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             return BitConverter.ToUInt32(BitConverter.GetBytes(value).Reverse().ToArray());
         }
 
-        static void ExchangeEqualSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
+        static void ExchangeEqualSectors(uint offset, in byte[] dataToExchange)
         {
             while (fileLock)
             {
@@ -600,12 +674,24 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             }
             fileLock = true;
 
-            Array.Copy(dataToExchange, 0, newIsoFile, offset * sectorSize, dataToExchange.Length);
+            //Fortunately, because our files are of equal sectors, we can just copy them directly over to the appopriate position without worrying.
+            //This is one of many major optimizations over the original UMDReplace
+            if((offset * sectorSize % Array.MaxLength) + dataToExchange.Length > Array.MaxLength)
+			{
+                //I'm unsure if this code will ever be hit, but I am including it in the off chance that it does manage to get hit. I personally don't have any imaginable circumstances that could create this, but hey, why not be safe?
+                long splitPoint = ((offset * sectorSize % Array.MaxLength) + dataToExchange.Length) % Array.MaxLength;
+                long startingArray = (offset * sectorSize) / Array.MaxLength;
+                long startingPoint = (offset * sectorSize) % Array.MaxLength;
+                Array.Copy(dataToExchange, 0, newIsoFile[startingArray], startingPoint, splitPoint-1);
+                Array.Copy(dataToExchange, splitPoint, newIsoFile[startingArray+1], 0, dataToExchange.Length - splitPoint);
+            }
+            else
+                Array.Copy(dataToExchange, 0, newIsoFile[(offset*sectorSize)/Array.MaxLength], (offset * sectorSize)%Array.MaxLength, dataToExchange.Length);
 
             fileLock = false;
         }
 
-        static void ExchangeInequalSectors(int offset, int originalFileSectors, in byte[] dataToExchange)
+        static void ExchangeInequalSectors(uint offset, uint originalFileSectors, in byte[] dataToExchange)
         {
             while (fileLock)
             {
@@ -614,12 +700,85 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             }
             fileLock = true;
 
-            byte[] newArrayWidth = new byte[newIsoFile.Length + dataToExchange.Length - originalFileSectors];
-            Array.Copy(newIsoFile, 0, newArrayWidth, 0, offset * sectorSize);
-            Array.Copy(dataToExchange, 0, newArrayWidth, offset * sectorSize, dataToExchange.Length);
-            Array.Copy(newIsoFile, sectorSize * (offset + originalFileSectors), newArrayWidth, offset * sectorSize + dataToExchange.Length, newIsoFile.Length - sectorSize * (offset + originalFileSectors));
+            long originalFileSize = sectorSize*originalFileSectors;
+            long newSize = newIsoFile[0..^1].LongLength * Array.MaxLength + (newIsoFile[^1].LongLength + dataToExchange.Length - originalFileSize);
+            long startingArray = offset * sectorSize / Array.MaxLength;
+            byte[][] exchangedIso = new byte[newSize/Array.MaxLength+1][];
+            
+            for (int i = 0; i < startingArray; i++)
+                exchangedIso[i] = newIsoFile[i];
+            for (long arrayIterator = startingArray; arrayIterator < exchangedIso.Length - 1; arrayIterator++)
+                exchangedIso[arrayIterator] = new byte[Array.MaxLength];
+            exchangedIso[^1] = new byte[newSize % Array.MaxLength];
 
-            newIsoFile = newArrayWidth;
+            long startPosition = (offset * sectorSize)%Array.MaxLength;
+
+            Array.Copy(newIsoFile[startingArray], 0, exchangedIso[startingArray], 0, startPosition); //Copy over the first half of the array into the new array
+            Array.Copy(dataToExchange, 0, exchangedIso[startingArray], startPosition, dataToExchange.Length); //Copy over the new bytes
+
+            long dataCopied = (startingArray) * (startPosition * Array.MaxLength) + startPosition + dataToExchange.LongLength;
+
+            if(dataToExchange.Length > originalFileSize)
+			{
+                //If the new file is bigger than the old one.
+
+                //First, copy the rest of the old array as much as our new array will allow
+                Array.Copy(newIsoFile[startingArray], startPosition + originalFileSize, exchangedIso[startingArray], startPosition + dataToExchange.Length, exchangedIso[startingArray].Length - (startPosition + dataToExchange.Length)); // Copy the old array contents starting from the end of the replaced file.
+                dataCopied += (exchangedIso[startingArray].Length - (startPosition + dataToExchange.Length));
+
+                if (startingArray != exchangedIso.Length-1)
+				{
+                    //If there is still more to copy from the old arrays
+                    long splitPosition = startPosition + originalFileSize + exchangedIso[startingArray].Length - (startPosition + dataToExchange.Length);
+
+                    //Copy up until the point we're on the last old array.
+                    for (long oldArrayIterator = startingArray + 1; oldArrayIterator < exchangedIso.Length; oldArrayIterator++)
+                    {
+                        //Finish copying over the contents of the old previous array into our new next array
+                        Array.Copy(newIsoFile[oldArrayIterator - 1], splitPosition, exchangedIso[oldArrayIterator], 0, newIsoFile[oldArrayIterator - 1].Length - splitPosition);
+                        dataCopied += (exchangedIso[startingArray].Length - (startPosition + dataToExchange.Length));
+
+                        //Now fill up our new next array as much as we can with its corresponding old array partner
+                        Array.Copy(newIsoFile[oldArrayIterator], 0, exchangedIso[oldArrayIterator], newIsoFile[oldArrayIterator - 1].Length - splitPosition, exchangedIso[oldArrayIterator].Length - (newIsoFile[oldArrayIterator - 1].Length - splitPosition));
+                        dataCopied += (exchangedIso[oldArrayIterator].Length - (newIsoFile[oldArrayIterator - 1].Length - splitPosition));
+                    }
+
+                    if(dataCopied < newSize)
+                        Array.Copy(newIsoFile[^1], splitPosition, exchangedIso[^1], 0, exchangedIso[^1].Length);
+                }
+            }
+            else
+			{
+                //If the old file was bigger than the new one
+
+                //First, copy the rest of the old array as applicable
+                Array.Copy(newIsoFile[startingArray], startPosition + originalFileSize, exchangedIso[startingArray], startPosition + dataToExchange.Length, newIsoFile[startingArray].Length - (startPosition + originalFileSize)); // Copy the old array contents starting from the end of the replaced file.
+                dataCopied += (newIsoFile[startingArray].Length - (startPosition + originalFileSize));
+
+                if (startingArray != newIsoFile.Length-1)
+                {
+                    //If there is still more to copy from the old arrays
+                    long splitPosition = startPosition + dataToExchange.Length + newIsoFile[startingArray].Length - (startPosition + originalFileSize);
+
+                    //Copy up until the point we're on the last old array.
+                    for (long oldArrayIterator = startingArray + 1; oldArrayIterator < newIsoFile.Length; oldArrayIterator++)
+                    {
+                        //Fill up the missing space with the bytes from the next array.
+                        Array.Copy(newIsoFile[oldArrayIterator], 0, exchangedIso[oldArrayIterator - 1], splitPosition, exchangedIso[oldArrayIterator - 1].Length - splitPosition);
+                        dataCopied += (exchangedIso[oldArrayIterator - 1].Length - splitPosition);
+
+                        //Now that our array iterators are lined up, dump whatever is left from the array that we just used to fill up the bytes
+                        Array.Copy(newIsoFile[oldArrayIterator], exchangedIso[oldArrayIterator - 1].Length - splitPosition, exchangedIso[oldArrayIterator], 0, newIsoFile[oldArrayIterator].Length - (exchangedIso[oldArrayIterator - 1].Length - splitPosition));
+                        dataCopied += (newIsoFile[oldArrayIterator].Length - (exchangedIso[oldArrayIterator - 1].Length - splitPosition));
+                    }
+
+                    //Grab the last contents of the old array and drop them into place for the new final array.
+                    if(dataCopied < newSize)
+                        Array.Copy(newIsoFile[^1], 0, exchangedIso[^1], splitPosition, exchangedIso[^1].Length - splitPosition);
+                }
+            }
+
+            newIsoFile = exchangedIso;
             fileLock = false;
         }
 
@@ -664,7 +823,13 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             ulong foundPosition = await Search(normalizedOldFileName, string.Empty, rootLba, rootLength);
             uint foundLBA = (uint)(foundPosition / sectorSize);
             uint foundOffset = (uint)(foundPosition % sectorSize);
-            uint oldFileSize = BitConverter.ToUInt32(originalIsoFile[(int)(sectorSize * foundLBA + foundOffset + 10)..(int)(sectorSize * foundLBA + foundOffset + 14)]);
+
+            byte[] oldFileSizeBytes = new byte[4];
+            //Again, unfortunately, we have to loop around the array. See my above comment as to why.
+            for (long oldFileSizePosStart = sectorSize * foundLBA + foundOffset + 10, i = 0; i < 4; oldFileSizePosStart++, i++)
+                oldFileSizeBytes[i] = originalIsoFile[oldFileSizePosStart / Array.MaxLength][(int)(oldFileSizePosStart % Array.MaxLength)];
+
+            uint oldFileSize = BitConverter.ToUInt32(oldFileSizeBytes);
             oldFileSizes.Add(normalizedOldFileName, oldFileSize);
             oldFileSectorCounts.Add(normalizedOldFileName, (oldFileSize + sectorData - 1) / sectorData);
         }
