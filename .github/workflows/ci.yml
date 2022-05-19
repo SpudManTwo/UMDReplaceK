@@ -1,0 +1,188 @@
+﻿name: Build UMDReplaceK Release Assets
+on: 
+  release:
+    types: [published]
+
+jobs:
+
+  build-release-win32:
+    name: Build Windows x86 Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x86 --self-contained false -p:PublishSingleFile=true -o win-x86
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x86 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o win-x86-sc
+      - name: Rename executables
+        run: |
+          mv win-x86/UMDReplaceK.exe win-x86/UMDReplaceK-win32.exe
+          mv win-x86-sc/UMDReplaceK.exe win-x86-sc/UMDReplaceK-Portable-win32.exe
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-x86/UMDReplaceK-win32.exe'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-x86-sc/UMDReplaceK-Portable-win32.exe'
+
+  build-release-win64:
+    name: Build Windows x64 Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o win-x64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o win-x64-sc
+      - name: Rename executables
+        run: |
+          mv win-x64/UMDReplaceK.exe win-x64/UMDReplaceK-win64.exe
+          mv win-x64-sc/UMDReplaceK.exe win-x64-sc/UMDReplaceK-Portable-win64.exe
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-x64/UMDReplaceK-win64.exe'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-x64-sc/UMDReplaceK-Portable-win64.exe'
+
+  build-release-win-arm64:
+    name: Build Windows arm64 Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained false -p:PublishSingleFile=true -o win-arm64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o win-arm64-sc
+      - name: Rename executables
+        run: |
+          mv win-arm64/UMDReplaceK.exe win-arm64/UMDReplaceK-winarm64.exe
+          mv win-arm64-sc/UMDReplaceK.exe win-arm64-sc/UMDReplaceK-Portable-winarm64.exe
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-arm64/UMDReplaceK-winarm64.exe'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'win-arm64-sc/UMDReplaceK-Portable-winarm64.exe'
+
+  build-release-linux:
+    name: Build Linux Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-x64 --self-contained false -p:PublishSingleFile=true -o linux-x64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o linux-x64-sc
+      - name: Rename executables
+        run: |
+          mv linux-x64/UMDReplaceK linux-x64/UMDReplaceK-linux
+          mv linux-x64-sc/UMDReplaceK linux-x64-sc/UMDReplaceK-Portable-linux
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'linux-x64/UMDReplaceK-linux'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'linux-x64-sc/UMDReplaceK-Portable-linux'
+
+  build-release-linux-arm:
+    name: Build Linux arm Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained false -p:PublishSingleFile=true -o linux-arm64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o linux-arm64-sc
+      - name: Rename executables
+        run: |
+          mv linux-arm64/UMDReplaceK linux-arm64/UMDReplaceK-linux-arm
+          mv linux-arm64-sc/UMDReplaceK linux-arm64-sc/UMDReplaceK-Portable-linux-arm
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'linux-arm64/UMDReplaceK-linux-arm'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'linux-arm64-sc/UMDReplaceK-Portable-linux-arm'
+
+  build-release-osx:
+    name: Build macOS Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-x64 --self-contained false -p:PublishSingleFile=true -o osx-x64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o osx-x64-sc
+      - name: Rename executables
+        run: |
+          mv osx-x64/UMDReplaceK osx-x64/UMDReplaceK-osx
+          mv osx-x64-sc/UMDReplaceK osx-x64-sc/UMDReplaceK-Portable-osx
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'osx-x64/UMDReplaceK-osx'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'osx-x64-sc/UMDReplaceK-Portable-osx'
+
+  build-release-osx-arm:
+    name: Build macOS M1 Releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build UMDReplaceK for normal Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained false -p:PublishSingleFile=true -o osx-arm64
+      - name: Build UMDReplaceK for portable Release
+        run: |
+          dotnet publish UMDReplaceK/UMDReplaceK.sln -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -o osx-arm64-sc
+      - name: Rename executables
+        run: |
+          mv osx-arm64/UMDReplaceK osx-arm64/UMDReplaceK-osx-arm
+          mv osx-arm64-sc/UMDReplaceK osx-arm64-sc/UMDReplaceK-Portable-osx-arm
+      - name: Add normal build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'osx-arm64/UMDReplaceK-osx-arm'
+      - name: Add portable build to release
+        uses: djn24/add-asset-to-release@v1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          path: 'osx-arm64-sc/UMDReplaceK-Portable-osx-arm'
