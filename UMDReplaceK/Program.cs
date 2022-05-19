@@ -15,19 +15,13 @@ namespace ScriptFileMapper
 
         //Int Constants
         const short DESCRIPTOR_LBA = 16; // 16 = 0x010 = LBA of the first volume descriptor
-        const short TOTAL_SECTORS = 80; // 80 = 0x050 = total number of sectors in the UMD
+        const short TOTAL_SECTORS = 80; // 80 = 0x050 = total number of sectors in the UMD, funnily enough, this also works for PS2 logic.
         const short TABLE_PATH_LBA = 140; // 132 = 0x08C LBA of the first table path
 
         //M0 Constants
         const long sectorSize = 2048;// 2048 = 0x800 = LEN_SECTOR_M0 = sector size
         const uint sectorData = 2048; // 2048 = 0x800 = POS_DATA_M0 = sector data length
         const uint dataOffset = 0; // 0 = 0x000 = LEN_DATA_M0 = sector data start
-
-        //File Input/Output Constants
-        const string TMPNAME = "umd-replacek.$"; // temporal name
-
-        //Non-Constant Ints
-        static ushort mode;        // image mode
 
         //Exit Code Definitions as per https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes
         const int SUCCESS_EXIT_CODE = 0;
@@ -57,7 +51,7 @@ namespace ScriptFileMapper
             System.Console.WriteLine(
                 @$"
 UMD-Replace K version {VERSION} - is a C# feature enriched successor of the original UMD-Replace 20150303 Copyright (C) 2012-2015 CUE
-Tiny tool to replace data files in a PSP UMD ISO.
+Tiny tool to replace data files in a PSP UMD ISO or in a PS2 ISO File.
 UMD-Replace K written and provided by @SpudManTwo and @Dormanil
 ");
 
@@ -78,11 +72,11 @@ UMD-Replace K written and provided by @SpudManTwo and @Dormanil
             {
                 //Usage Explanation
                 System.Console.WriteLine(@"Usage: UMD-REPLACEK imagename {batchFileOfArguments | (filename newfile ...)}
-- 'imagename' is the name of the UMD image
+- 'imagename' is the name of the UMD image or PS2 Iso image
 - 'batchFileOfArguments' is the file where a set of batch arguments are stored. This is used for replacing files in a larger bulk than command line arguments can support
-- 'filename' is the file in the UMD image with the data to be replaced
+- 'filename' is the file in the image with the data to be replaced
 - 'newfile' is the relative file path with the new data
-* 'imagename' must be a valid UMD ISO image
+* 'imagename' must be a valid UMD ISO image or PS2 Iso image
 * 'filename' can use either the slash or backslash
 * 'newfile' can be different size as 'filename'");
                 //Bad Argument Exit
